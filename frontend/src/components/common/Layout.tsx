@@ -12,8 +12,11 @@ import {
   BarChart3,
   Settings,
   LogOut,
+  Bell,
+  CheckCheck,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
+import { useNotificationStore } from '@/stores/notificationStore'
 import EmergencyStopButton from './EmergencyStopButton'
 
 const navItems = [
@@ -26,6 +29,75 @@ const navItems = [
   { path: '/backtest', label: '백테스트', icon: BarChart3 },
   { path: '/settings', label: '설정', icon: Settings },
 ]
+
+function NotificationPanel() {
+  const [open, setOpen] = useState(false)
+  const { notifications, unreadCount, markAllRead, remove } = useNotificationStore()
+
+  const TYPE_COLORS: Record<string, string> = {
+    order_filled: 'border-emerald-600',
+    order_created: 'border-blue-600',
+    order_failed: 'border-red-600',
+    emergency_stop: 'border-red-600',
+    ai_advice: 'border-purple-600',
+    error: 'border-red-600',
+    info: 'border-gray-600',
+  }
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="relative p-2 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+      >
+        <Bell size={20} />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white text-[10px] rounded-full flex items-center justify-center font-bold">
+            {unreadCount > 9 ? '9+' : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-10 z-50 w-80 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+              <span className="text-sm font-semibold text-white">알림</span>
+              {unreadCount > 0 && (
+                <button onClick={markAllRead} className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
+                  <CheckCheck size={12} />
+                  모두 읽음
+                </button>
+              )}
+            </div>
+            <div className="max-h-80 overflow-y-auto">
+              {notifications.length === 0 ? (
+                <div className="px-4 py-8 text-center text-gray-500 text-sm">알림이 없습니다.</div>
+              ) : (
+                notifications.slice(0, 20).map((n) => (
+                  <div
+                    key={n.id}
+                    className={`px-4 py-3 border-l-2 ${TYPE_COLORS[n.type] || 'border-gray-700'} ${!n.read ? 'bg-gray-800/60' : ''} hover:bg-gray-800`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{n.title}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 line-clamp-2">{n.message}</p>
+                      </div>
+                      <button onClick={() => remove(n.id)} className="text-gray-600 hover:text-gray-400 text-xs flex-shrink-0">✕</button>
+                    </div>
+                    <p className="text-xs text-gray-600 mt-1">{new Date(n.timestamp).toLocaleTimeString('ko-KR')}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -111,7 +183,10 @@ export default function Layout() {
             {navItems.find((item) => item.path === location.pathname)?.label ||
               ''}
           </h2>
-          <EmergencyStopButton />
+          <div className="flex items-center gap-2">
+            <NotificationPanel />
+            <EmergencyStopButton />
+          </div>
         </header>
 
         {/* Page Content */}
