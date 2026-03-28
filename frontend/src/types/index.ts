@@ -1,0 +1,69 @@
+export interface Candle {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface Strategy {
+  id: string;
+  name: string;
+  symbol: string;
+  timeframe: string;
+  condition_tree: ConditionNode;
+  order_config: OrderConfig;
+  exit_condition?: ConditionNode;
+  ai_mode: 'off' | 'auto' | 'semi_auto' | 'observe';
+  priority: number;
+  hold_retry_interval: number;
+  hold_max_retry: number;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConditionNode {
+  operator?: 'AND' | 'OR';
+  conditions?: ConditionNode[];
+  indicator?: string;
+  params?: Record<string, any>;
+  compareOperator?: string;
+  value?: number;
+  compare_to?: string;
+}
+
+export interface OrderConfig {
+  side: 'buy' | 'sell';
+  type: 'market' | 'limit';
+  quantity_type: 'fixed_amount' | 'balance_pct' | 'fixed_qty';
+  quantity_value: number;
+  take_profit_pct?: number;
+  stop_loss_pct?: number;
+  trailing_stop?: boolean;
+}
+
+export interface PriceUpdate {
+  type: 'price_update';
+  symbol: string;
+  price: number;
+  change_24h: number;
+  volume_24h: number;
+  timestamp: number;
+}
+
+export interface Balance {
+  symbol: string;
+  available: number;
+  locked: number;
+  total: number;
+}
+
+export interface ExchangeAccount {
+  id: string;
+  exchange_id: string;
+  is_testnet: boolean;
+  is_active: boolean;
+  created_at: string;
+}

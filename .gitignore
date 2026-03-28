@@ -1,0 +1,68 @@
+
+# Docker
+# Environment variables
+# IDE
+# Next.js / React
+# Node.js
+# OS
+# PyCharm
+# Python
+# pytest
+*$py.class
+*.egg
+*.egg-info/
+*.iml
+*.py[cod]
+*.so
+*.swo
+*.swp
+*~
+.DS_Store
+.DS_Store?
+.Python
+.Spotlight-V100
+.Trashes
+._*
+.claude/
+.coverage
+.eggs/
+.env
+.env.*.local
+.env.local
+.idea/
+.installed.cfg
+.next/
+.pytest_cache/
+.venv
+.venv/
+.vim/
+.vscode/
+ENV/
+MANIFEST
+Thumbs.db
+__pycache__/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+ehthumbs.db
+env/
+htmlcov/
+lib/
+lib64/
+node_modules/
+npm-debug.log
+out/
+package-lock.json
+parts/
+pg_data/
+pip-wheel-metadata/
+redis_data/
+sdist/
+share/python-wheels/
+var/
+venv/
+wheels/
+yarn-error.log
+yarn.lock
