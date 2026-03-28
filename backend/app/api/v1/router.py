@@ -8,6 +8,7 @@ from app.api.v1 import strategies
 from app.api.v1 import charts
 from app.api.v1 import emergency
 from app.api.v1 import ai_advisor
+from app.api.v1 import backtest
 
 # Create v1 router
 router = APIRouter(prefix="/api/v1")
@@ -21,5 +22,6 @@ router.include_router(strategies.router)
 router.include_router(charts.router)
 router.include_router(emergency.router)
 router.include_router(ai_advisor.router)
+router.include_router(backtest.router)
 
 __all__ = ["router"]
