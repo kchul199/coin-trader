@@ -73,8 +73,8 @@ async def _run_backtest_async(
 ) -> dict:
     """실제 백테스트 비동기 실행"""
     import redis.asyncio as aioredis
-    from app.core.config import settings
-    from app.core.database import async_session_factory
+    from app.config import settings
+    from app.database import AsyncSessionLocal as async_session_factory
     from app.services.backtest_service import BacktestService
 
     start_date = date.fromisoformat(start_date_str)

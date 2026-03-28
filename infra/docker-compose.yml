@@ -1,17 +1,19 @@
 version: "3.9"
 
+x-backend-env: &backend-env
+  env_file:
+    - ../.env
+  environment:
+    - DATABASE_URL=postgresql+asyncpg://cointrader:secret@postgres/cointrader
+    - REDIS_URL=redis://redis:6379/0
+    - CELERY_BROKER_URL=redis://redis:6379/1
+
 services:
   backend:
     build: ../backend
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://cointrader:secret@postgres/cointrader
-      - REDIS_URL=redis://redis:6379/0
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - EXCHANGE_ID=binance
-      - USE_TESTNET=true
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    <<: *backend-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -23,27 +25,15 @@ services:
 
   celery-worker:
     build: ../backend
-    command: celery -A app.tasks.celery_app worker -Q trading,ai_advice,maintenance -c 4
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://cointrader:secret@postgres/cointrader
-      - REDIS_URL=redis://redis:6379/0
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - EXCHANGE_ID=binance
-      - USE_TESTNET=true
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    <<: *backend-env
+    command: celery -A app.tasks.celery_app worker -Q trading,ai_advice,maintenance -c 4 --loglevel=info
     depends_on:
       - backend
 
   celery-beat:
     build: ../backend
-    command: celery -A app.tasks.celery_app beat -S redbeat.RedBeatScheduler
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://cointrader:secret@postgres/cointrader
-      - REDIS_URL=redis://redis:6379/0
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - EXCHANGE_ID=binance
-      - USE_TESTNET=true
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+    <<: *backend-env
+    command: celery -A app.tasks.celery_app beat -S redbeat.RedBeatScheduler --loglevel=info
     depends_on:
       - celery-worker
 

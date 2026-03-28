@@ -1,183 +1,197 @@
--- Users table
+-- ============================================================
+-- Coin Trader — PostgreSQL 초기화 스크립트
+-- ORM 모델(backend/app/models/) 기준으로 동기화됨
+-- UUID 확장 활성화
+-- ============================================================
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";   -- gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";  -- uuid_generate_v4()
+
+-- ─── Users ───────────────────────────────────────────────────
 CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(255) NOT NULL UNIQUE,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email             VARCHAR(255) NOT NULL UNIQUE,
+    password_hash     VARCHAR(255) NOT NULL,
+    totp_secret       VARCHAR(32),
+    is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- JWT Blacklist table
+CREATE INDEX idx_users_email ON users(email);
+
+-- ─── JWT Blacklist ───────────────────────────────────────────
 CREATE TABLE jwt_blacklist (
-    id SERIAL PRIMARY KEY,
-    token VARCHAR(500) NOT NULL UNIQUE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    expires_at TIMESTAMP NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    jti               UUID PRIMARY KEY,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason            VARCHAR(255),
+    expires_at        TIMESTAMPTZ NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_jwt_blacklist_expires_at ON jwt_blacklist(expires_at);
 
--- Exchange Accounts table
+-- ─── Exchange Accounts ───────────────────────────────────────
 CREATE TABLE exchange_accounts (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    exchange_id VARCHAR(50) NOT NULL,
-    api_key VARCHAR(500) NOT NULL,
-    api_secret VARCHAR(500) NOT NULL,
-    is_testnet BOOLEAN DEFAULT false,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CHECK (exchange_id IN ('binance', 'kraken', 'coinbase', 'bybit'))
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exchange_id       VARCHAR(50) NOT NULL,
+    api_key_encrypted BYTEA NOT NULL,
+    api_secret_encrypted BYTEA NOT NULL,
+    is_testnet        BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active         BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Balances table
+-- ─── Balances ────────────────────────────────────────────────
 CREATE TABLE balances (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    exchange_account_id INTEGER NOT NULL REFERENCES exchange_accounts(id) ON DELETE CASCADE,
-    asset VARCHAR(20) NOT NULL,
-    free NUMERIC(20, 8) NOT NULL,
-    locked NUMERIC(20, 8) NOT NULL,
-    total NUMERIC(20, 8) NOT NULL,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (exchange_account_id, asset)
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    exchange_id       VARCHAR(50) NOT NULL,
+    symbol            VARCHAR(20) NOT NULL,
+    available         NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    locked            NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    synced_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_balance_user_exchange_symbol UNIQUE (user_id, exchange_id, symbol)
 );
 
--- Strategies table
+-- ─── Strategies ──────────────────────────────────────────────
 CREATE TABLE strategies (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    symbol VARCHAR(20) NOT NULL,
-    base_currency VARCHAR(10) NOT NULL,
-    quote_currency VARCHAR(10) NOT NULL,
-    is_active BOOLEAN DEFAULT false,
-    ai_mode VARCHAR(50) NOT NULL,
-    priority INTEGER NOT NULL DEFAULT 1,
-    max_position_size NUMERIC(20, 8),
-    stop_loss_percent NUMERIC(5, 2),
-    take_profit_percent NUMERIC(5, 2),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CHECK (ai_mode IN ('disabled', 'suggestion', 'auto_execute')),
-    CHECK (priority >= 1 AND priority <= 10)
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name              VARCHAR(255) NOT NULL,
+    symbol            VARCHAR(20) NOT NULL,
+    timeframe         VARCHAR(10) NOT NULL,
+    condition_tree    JSONB NOT NULL,
+    order_config      JSONB NOT NULL,
+    exit_condition    JSONB,
+    ai_mode           VARCHAR(50) NOT NULL DEFAULT 'off',
+    priority          SMALLINT NOT NULL DEFAULT 5,
+    hold_retry_interval INTEGER NOT NULL DEFAULT 300,
+    hold_max_retry    SMALLINT NOT NULL DEFAULT 3,
+    is_active         BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_strategies_user_id ON strategies(user_id);
 CREATE INDEX idx_strategies_is_active ON strategies(is_active);
 
--- Orders table
+-- ─── Orders ──────────────────────────────────────────────────
 CREATE TABLE orders (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
-    exchange_order_id VARCHAR(255),
-    symbol VARCHAR(20) NOT NULL,
-    side VARCHAR(10) NOT NULL,
-    order_type VARCHAR(20) NOT NULL,
-    quantity NUMERIC(20, 8) NOT NULL,
-    price NUMERIC(20, 8),
-    status VARCHAR(50) NOT NULL,
-    filled_quantity NUMERIC(20, 8) DEFAULT 0,
-    average_price NUMERIC(20, 8),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CHECK (side IN ('buy', 'sell')),
-    CHECK (status IN ('pending', 'open', 'partially_filled', 'filled', 'cancelled', 'rejected'))
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    strategy_id       UUID NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+    exchange_id       VARCHAR(50) NOT NULL,
+    exchange_order_id VARCHAR(100) NOT NULL,
+    symbol            VARCHAR(20) NOT NULL,
+    side              VARCHAR(10) NOT NULL,
+    order_type        VARCHAR(20) NOT NULL,
+    price             NUMERIC(20, 8) NOT NULL,
+    quantity          NUMERIC(20, 8) NOT NULL,
+    filled_quantity   NUMERIC(20, 8) NOT NULL DEFAULT 0,
+    avg_fill_price    NUMERIC(20, 8),
+    fee               NUMERIC(20, 8),
+    slippage_pct      NUMERIC(5, 2),
+    status            VARCHAR(50) NOT NULL DEFAULT 'pending',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    filled_at         TIMESTAMPTZ,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_orders_strategy_id ON orders(strategy_id);
 CREATE INDEX idx_orders_status ON orders(status);
 
--- AI Consultations table
+-- ─── AI Consultations ────────────────────────────────────────
 CREATE TABLE ai_consultations (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    strategy_id INTEGER REFERENCES strategies(id) ON DELETE SET NULL,
-    symbol VARCHAR(20) NOT NULL,
-    decision VARCHAR(50) NOT NULL,
-    confidence NUMERIC(3, 2),
-    reasoning TEXT,
-    risk_level VARCHAR(20) NOT NULL,
-    recommended_action TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CHECK (decision IN ('buy', 'sell', 'hold')),
-    CHECK (risk_level IN ('low', 'medium', 'high'))
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    strategy_id       UUID NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+    order_id          UUID REFERENCES orders(id) ON DELETE SET NULL,
+    model             VARCHAR(100) NOT NULL,
+    prompt_version    VARCHAR(50) NOT NULL,
+    decision          VARCHAR(100) NOT NULL,
+    confidence        INTEGER NOT NULL,
+    reason            VARCHAR(1000),
+    risk_level        VARCHAR(50),
+    key_concerns      JSONB,
+    user_approved     BOOLEAN,
+    latency_ms        INTEGER NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_ai_consultations_user_id ON ai_consultations(user_id);
 CREATE INDEX idx_ai_consultations_strategy_id ON ai_consultations(strategy_id);
 
--- Candles table (OHLCV data)
+-- ─── Candles (OHLCV) ────────────────────────────────────────
 CREATE TABLE candles (
-    exchange_id VARCHAR(50) NOT NULL,
-    symbol VARCHAR(20) NOT NULL,
-    timeframe VARCHAR(10) NOT NULL,
-    open_time BIGINT NOT NULL,
-    open NUMERIC(20, 8) NOT NULL,
-    high NUMERIC(20, 8) NOT NULL,
-    low NUMERIC(20, 8) NOT NULL,
-    close NUMERIC(20, 8) NOT NULL,
-    volume NUMERIC(20, 8) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (exchange_id, symbol, timeframe, open_time)
+    symbol            VARCHAR(20) NOT NULL,
+    exchange          VARCHAR(50) NOT NULL,
+    timeframe         VARCHAR(10) NOT NULL,
+    ts                TIMESTAMPTZ NOT NULL,
+    open              NUMERIC(20, 8) NOT NULL,
+    high              NUMERIC(20, 8) NOT NULL,
+    low               NUMERIC(20, 8) NOT NULL,
+    close             NUMERIC(20, 8) NOT NULL,
+    volume            NUMERIC(20, 8) NOT NULL,
+    PRIMARY KEY (symbol, exchange, timeframe, ts)
 );
 
 CREATE INDEX idx_candles_symbol_timeframe ON candles(symbol, timeframe);
 
--- Portfolio table
-CREATE TABLE portfolio (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    total_value NUMERIC(20, 8) NOT NULL,
-    total_cost NUMERIC(20, 8) NOT NULL,
-    unrealized_pnl NUMERIC(20, 8),
-    realized_pnl NUMERIC(20, 8),
-    snapshot_date DATE NOT NULL,
-    UNIQUE (user_id, snapshot_date)
+-- ─── Portfolios ──────────────────────────────────────────────
+CREATE TABLE portfolios (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol            VARCHAR(20) NOT NULL,
+    exchange_id       VARCHAR(50) NOT NULL,
+    quantity          NUMERIC(20, 8) NOT NULL,
+    avg_buy_price     NUMERIC(20, 8) NOT NULL,
+    initial_capital   NUMERIC(20, 8) NOT NULL,
+    last_updated      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_portfolio_user_symbol_exchange UNIQUE (user_id, symbol, exchange_id)
 );
 
--- Strategy Conflicts table
+-- ─── Strategy Conflicts ─────────────────────────────────────
 CREATE TABLE strategy_conflicts (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    strategy_id_1 INTEGER NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
-    strategy_id_2 INTEGER NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
-    conflict_type VARCHAR(100) NOT NULL,
-    severity VARCHAR(20) NOT NULL,
-    detected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    symbol            VARCHAR(20) NOT NULL,
+    strategy_ids      JSONB NOT NULL,
+    conflict_type     VARCHAR(100) NOT NULL,
+    resolution        VARCHAR(100) NOT NULL,
+    winner_strategy_id UUID,
+    occurred_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Emergency Stops table
+-- ─── Emergency Stops ─────────────────────────────────────────
 CREATE TABLE emergency_stops (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    reason VARCHAR(500) NOT NULL,
-    is_active BOOLEAN DEFAULT true,
-    triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    strategy_id       UUID REFERENCES strategies(id) ON DELETE SET NULL,
+    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    reason            VARCHAR(500) NOT NULL,
+    cancelled_orders  JSONB NOT NULL DEFAULT '[]',
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Backtest Results table
+-- ─── Backtest Results ────────────────────────────────────────
 CREATE TABLE backtest_results (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    strategy_id INTEGER NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
-    start_date DATE NOT NULL,
-    end_date DATE NOT NULL,
-    initial_capital NUMERIC(20, 8) NOT NULL,
-    final_capital NUMERIC(20, 8) NOT NULL,
-    total_return NUMERIC(5, 2) NOT NULL,
-    sharpe_ratio NUMERIC(5, 2),
-    max_drawdown NUMERIC(5, 2),
-    win_rate NUMERIC(5, 2),
-    trades_count INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    strategy_id       UUID NOT NULL REFERENCES strategies(id) ON DELETE CASCADE,
+    start_date        DATE NOT NULL,
+    end_date          DATE NOT NULL,
+    params_snapshot   JSONB NOT NULL,
+    initial_capital   NUMERIC(20, 2) NOT NULL,
+    final_capital     NUMERIC(20, 2) NOT NULL,
+    total_return_pct  NUMERIC(10, 2) NOT NULL,
+    max_drawdown_pct  NUMERIC(10, 2) NOT NULL,
+    sharpe_ratio      NUMERIC(10, 4) NOT NULL,
+    win_rate          NUMERIC(5, 2) NOT NULL,
+    profit_factor     NUMERIC(10, 2) NOT NULL,
+    total_trades      INTEGER NOT NULL,
+    ai_on_return_pct  NUMERIC(10, 2),
+    ai_off_return_pct NUMERIC(10, 2),
+    commission_pct    NUMERIC(5, 2) NOT NULL,
+    slippage_pct      NUMERIC(5, 2) NOT NULL,
+    equity_curve      JSONB NOT NULL,
+    trade_history     JSONB NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_backtest_results_strategy_id ON backtest_results(strategy_id);

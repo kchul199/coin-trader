@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, Brain, TrendingUp, TrendingDown, Minus } from 'lucide-react'
+import { RefreshCw, Brain } from 'lucide-react'
 import { aiAdvisorApi, AiConsultation, AiStats } from '@/api/endpoints/ai_advisor'
 import { useStrategyStore } from '@/stores/strategyStore'
 

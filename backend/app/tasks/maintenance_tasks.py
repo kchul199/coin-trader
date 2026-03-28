@@ -124,7 +124,7 @@ def save_candles():
         from app.config import settings
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        exchange = await create_exchange_adapter(settings)
+        exchange = create_exchange_adapter()
         saved_total = 0
 
         try:
@@ -137,17 +137,17 @@ def save_candles():
 
                         rows = []
                         for candle in ohlcv:
-                            ts = datetime.fromtimestamp(candle[0] / 1000, tz=timezone.utc)
+                            ts = datetime.fromtimestamp(candle["timestamp"] / 1000, tz=timezone.utc)
                             rows.append({
                                 "symbol": symbol,
                                 "exchange": settings.EXCHANGE_ID,
                                 "timeframe": timeframe,
                                 "ts": ts,
-                                "open": candle[1],
-                                "high": candle[2],
-                                "low": candle[3],
-                                "close": candle[4],
-                                "volume": candle[5],
+                                "open": candle["open"],
+                                "high": candle["high"],
+                                "low": candle["low"],
+                                "close": candle["close"],
+                                "volume": candle["volume"],
                             })
 
                         async with AsyncSessionLocal() as db:
@@ -174,7 +174,7 @@ def cleanup_expired_blacklist():
     """만료된 JWT 블랙리스트 레코드 정리"""
     async def _run():
         from app.database import AsyncSessionLocal
-        from app.models.jwt_blacklist import JwtBlacklist
+        from app.models.jwt_blacklist import JWTBlacklist as JwtBlacklist
         from sqlalchemy import delete
 
         async with AsyncSessionLocal() as db:

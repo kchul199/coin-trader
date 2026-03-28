@@ -38,6 +38,10 @@ class ConnectionManager:
             for ws in dead_connections:
                 self.active_connections.get(channel, set()).discard(ws)
 
+    async def broadcast_json(self, message: dict, channel: str = "global"):
+        """broadcast의 alias — JSON dict 전송"""
+        await self.broadcast(message, channel)
+
     async def broadcast_all(self, message: dict):
         """모든 채널에 브로드캐스트"""
         for channel in list(self.active_connections.keys()):

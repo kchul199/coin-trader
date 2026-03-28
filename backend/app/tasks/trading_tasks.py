@@ -49,7 +49,7 @@ def evaluate_strategy_task(self, strategy_id: str):
         from app.trading.engine import TradingEngine
 
         redis = await get_redis()
-        exchange = await create_exchange_adapter(settings)
+        exchange = create_exchange_adapter()
 
         try:
             async with AsyncSessionLocal() as db:
@@ -159,7 +159,7 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
         import uuid
 
         redis = await get_redis()
-        exchange = await create_exchange_adapter(settings)
+        exchange = create_exchange_adapter()
 
         lock_key = f"emergency:lock:{strategy_id}"
         flag_key = f"emergency:stop:{strategy_id}"

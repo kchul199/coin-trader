@@ -185,10 +185,10 @@ class BacktestService:
             .where(
                 Candle.symbol == symbol,
                 Candle.timeframe == timeframe,
-                Candle.open_time >= start_dt,
-                Candle.open_time <= end_dt,
+                Candle.ts >= start_dt,
+                Candle.ts <= end_dt,
             )
-            .order_by(Candle.open_time.asc())
+            .order_by(Candle.ts.asc())
         )
         candles = result.scalars().all()
 
@@ -197,7 +197,7 @@ class BacktestService:
 
         rows = [
             {
-                "time": c.open_time,
+                "time": c.ts,
                 "open": float(c.open),
                 "high": float(c.high),
                 "low": float(c.low),
