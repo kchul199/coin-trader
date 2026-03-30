@@ -67,6 +67,17 @@ docker compose exec backend python -m scripts.seed_candles \
 | PostgreSQL | localhost:5432 (cointrader/secret) |
 | Redis | localhost:6379 |
 
+## 4.5단계: 자동 기동 테스트 (선택)
+
+모든 서비스가 정상인지 자동 확인:
+
+```bash
+# 프로젝트 루트에서
+bash scripts/test_docker.sh
+```
+
+PostgreSQL 연결, 테이블 생성, Redis, Backend API (회원가입/로그인), Frontend 접속, Celery 상태를 한번에 점검합니다.
+
 ## 5단계: 최초 테스트 흐름
 
 1. http://localhost:3000 접속 → 회원가입
@@ -75,6 +86,8 @@ docker compose exec backend python -m scripts.seed_candles \
 4. Dashboard → 실시간 가격 확인
 5. Backtest → 전략 선택 → 기간 설정 → 실행
 6. AI Advisor → 자문 조회
+
+> **참고:** Binance API 키/Anthropic API 키 없이도 회원가입, 로그인, 전략 CRUD, UI 탐색은 정상 동작합니다. 거래 실행과 AI 어드바이저만 해당 키가 필요합니다.
 
 ## DB 초기화 (스키마 변경 시)
 

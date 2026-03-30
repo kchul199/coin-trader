@@ -34,8 +34,12 @@ async def startup_event():
     """Initialize database and Redis on startup."""
     await init_db()
     await get_redis()
-    # Start price feed as background task
-    price_feed._task = asyncio.create_task(price_feed.start())
+    # Start price feed as background task (graceful — 실패해도 서버 기동에 영향 없음)
+    try:
+        price_feed._task = asyncio.create_task(price_feed.start())
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Price feed 시작 실패 (나중에 재시도): {e}")
 
 
 @app.on_event("shutdown")
