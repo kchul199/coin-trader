@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { ConditionNode } from '@/types'
+import { ConditionNode, ConditionParamValue } from '@/types'
 import { Plus, Trash2 } from 'lucide-react'
 
 const INDICATORS = ['RSI', 'MACD', 'BB', 'MA', 'EMA', 'STOCH', 'CCI', 'VOLUME']
@@ -31,6 +30,25 @@ interface LeafEditorProps {
   onDelete: () => void
 }
 
+function isGroupNode(node: ConditionNode) {
+  return Array.isArray(node.conditions)
+}
+
+function getDefaultCompareTo(indicator?: string, compareOperator?: string) {
+  if (indicator === 'VOLUME' && compareOperator === 'gt_multiple') {
+    return 'volume_ma_20'
+  }
+  return undefined
+}
+
+function getStringParam(value: ConditionParamValue, fallback: string) {
+  return typeof value === 'string' ? value : fallback
+}
+
+function getNumberParam(value: ConditionParamValue) {
+  return typeof value === 'number' ? value : ''
+}
+
 function LeafEditor({ node, onChange, onDelete }: LeafEditorProps) {
   const indicator = node.indicator || 'RSI'
   const specials = OPERATORS_SPECIAL[indicator] || OPERATORS_NUMERIC
@@ -40,14 +58,22 @@ function LeafEditor({ node, onChange, onDelete }: LeafEditorProps) {
       <select
         className="bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-700"
         value={indicator}
-        onChange={(e) => onChange({ ...node, indicator: e.target.value, compareOperator: undefined, value: undefined })}
+        onChange={(e) =>
+          onChange({
+            ...node,
+            indicator: e.target.value,
+            compareOperator: undefined,
+            compare_to: undefined,
+            value: undefined,
+          })
+        }
       >
         {INDICATORS.map((i) => <option key={i}>{i}</option>)}
       </select>
 
       <select
         className="bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-700"
-        value={node.params?.timeframe || '1h'}
+        value={getStringParam(node.params?.timeframe, '1h')}
         onChange={(e) => onChange({ ...node, params: { ...node.params, timeframe: e.target.value } })}
       >
         {TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}
@@ -58,7 +84,7 @@ function LeafEditor({ node, onChange, onDelete }: LeafEditorProps) {
           type="number"
           placeholder="기간"
           className="bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-700 w-16"
-          value={node.params?.period || ''}
+          value={getNumberParam(node.params?.period)}
           onChange={(e) => onChange({ ...node, params: { ...node.params, period: parseInt(e.target.value) } })}
         />
       )}
@@ -66,11 +92,22 @@ function LeafEditor({ node, onChange, onDelete }: LeafEditorProps) {
       <select
         className="bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-700"
         value={node.compareOperator || ''}
-        onChange={(e) => onChange({ ...node, compareOperator: e.target.value })}
+        onChange={(e) => {
+          const compareOperator = e.target.value || undefined
+          onChange({
+            ...node,
+            compareOperator,
+            compare_to: getDefaultCompareTo(indicator, compareOperator),
+          })
+        }}
       >
         <option value="">조건 선택</option>
         {specials.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
+
+      {indicator === 'VOLUME' && node.compareOperator === 'gt_multiple' && (
+        <span className="text-xs text-gray-400 whitespace-nowrap">20봉 이평 대비</span>
+      )}
 
       {(node.compareOperator === 'lt' || node.compareOperator === 'lte' || node.compareOperator === 'gt' || node.compareOperator === 'gte' || node.compareOperator === 'gt_multiple') && (
         <input
@@ -150,7 +187,7 @@ function GroupEditor({ node, onChange, onDelete, depth = 0 }: GroupEditorProps) 
       </div>
 
       {(node.conditions || []).map((child, idx) =>
-        child.operator ? (
+        isGroupNode(child) ? (
           <GroupEditor
             key={idx}
             node={child}

@@ -10,7 +10,11 @@ from app.websocket.manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
-BINANCE_WS_BASE = "wss://testnet.binance.vision/ws" if settings.USE_TESTNET else "wss://stream.binance.com:9443/ws"
+BINANCE_WS_BASE = (
+    "wss://stream.testnet.binance.vision"
+    if settings.USE_TESTNET
+    else "wss://stream.binance.com:9443"
+)
 
 # 구독할 심볼 목록 (운영 중에는 DB에서 동적으로 로드)
 DEFAULT_SYMBOLS = ["btcusdt", "ethusdt"]

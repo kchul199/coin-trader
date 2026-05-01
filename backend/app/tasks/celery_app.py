@@ -6,6 +6,12 @@ celery_app = Celery(
     "coin_trader",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.REDIS_URL,
+    include=[
+        "app.tasks.trading_tasks",
+        "app.tasks.ai_tasks",
+        "app.tasks.maintenance_tasks",
+        "app.tasks.backtest_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -32,5 +38,8 @@ celery_app.conf.update(
     beat_scheduler="redbeat.RedBeatScheduler",
 )
 
-# Auto-discover tasks
-celery_app.autodiscover_tasks(["app.tasks"])
+# Explicit imports keep worker/beat registration stable inside Docker builds.
+import app.tasks.ai_tasks  # noqa: F401,E402
+import app.tasks.backtest_tasks  # noqa: F401,E402
+import app.tasks.maintenance_tasks  # noqa: F401,E402
+import app.tasks.trading_tasks  # noqa: F401,E402

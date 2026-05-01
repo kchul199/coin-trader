@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BarChart3, Play, RefreshCw, Clock } from 'lucide-react'
-import { createChart, IChartApi, ISeriesApi, LineData } from 'lightweight-charts'
+import { createChart, IChartApi, ISeriesApi, LineData, UTCTimestamp } from 'lightweight-charts'
 import { backtestApi, BacktestResult, BacktestJobStatus } from '@/api/endpoints/backtest'
 import { useStrategyStore } from '@/stores/strategyStore'
+import { getErrorMessage } from '@/utils/error'
 
 // ─────────────────────────── MetricCard ───────────────────────────
 
@@ -70,16 +71,17 @@ function EquityChart({ data }: { data: { time: string; value: number }[] }) {
   useEffect(() => {
     if (!seriesRef.current || !data.length) return
 
-    const seen = new Set<number>()
+    const seen = new Set<UTCTimestamp>()
     const mapped: LineData[] = data
       .map((d) => ({
-        time: Math.floor(new Date(d.time).getTime() / 1000) as any,
+        time: Math.floor(new Date(d.time).getTime() / 1000) as UTCTimestamp,
         value: d.value,
       }))
-      .sort((a, b) => (a.time as number) - (b.time as number))
+      .sort((a, b) => Number(a.time) - Number(b.time))
       .filter((v) => {
-        if (seen.has(v.time as number)) return false
-        seen.add(v.time as number)
+        const timestamp = v.time as UTCTimestamp
+        if (seen.has(timestamp)) return false
+        seen.add(timestamp)
         return true
       })
 
@@ -221,7 +223,8 @@ function ResultPanel({ result }: { result: BacktestResult }) {
 // ──────────────────────────── Main Page ───────────────────────────
 
 export default function Backtest() {
-  const { strategies, fetchStrategies } = useStrategyStore()
+  const strategies = useStrategyStore((s) => s.strategies)
+  const fetchStrategies = useStrategyStore((s) => s.fetchStrategies)
 
   const [strategyId, setStrategyId] = useState('')
   const [startDate, setStartDate] = useState(() => {
@@ -246,10 +249,22 @@ export default function Backtest() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  useEffect(() => {
-    fetchStrategies()
-    loadHistory()
+  const loadHistory = useCallback(async (sid?: string) => {
+    setHistoryLoading(true)
+    try {
+      const res = await backtestApi.getHistory({ strategy_id: sid, limit: 20 })
+      setHistory(res.data.items)
+    } catch {
+      // ignore
+    } finally {
+      setHistoryLoading(false)
+    }
   }, [])
+
+  useEffect(() => {
+    void fetchStrategies()
+    void loadHistory()
+  }, [fetchStrategies, loadHistory])
 
   useEffect(() => {
     if (!jobId) return
@@ -278,19 +293,7 @@ export default function Backtest() {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [jobId])
-
-  const loadHistory = async (sid?: string) => {
-    setHistoryLoading(true)
-    try {
-      const res = await backtestApi.getHistory({ strategy_id: sid, limit: 20 })
-      setHistory(res.data.items)
-    } catch {
-      // ignore
-    } finally {
-      setHistoryLoading(false)
-    }
-  }
+  }, [jobId, loadHistory])
 
   const handleRun = async () => {
     if (!strategyId) return
@@ -309,9 +312,9 @@ export default function Backtest() {
         slippage_pct: parseFloat(slippagePct) || 0.02,
       })
       setJobId(res.data.job_id)
-    } catch (e: any) {
+    } catch (error: unknown) {
       setRunning(false)
-      setError(e?.response?.data?.detail || '백테스트 요청 실패')
+      setError(getErrorMessage(error, '백테스트 요청 실패'))
     }
   }
 
@@ -344,7 +347,7 @@ export default function Backtest() {
           <button
             onClick={() => {
               setActiveTab('history')
-              loadHistory()
+              void loadHistory()
             }}
             className={`px-3 py-1.5 text-sm rounded transition-colors ${
               activeTab === 'history'

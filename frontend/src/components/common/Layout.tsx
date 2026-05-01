@@ -21,7 +21,7 @@ import EmergencyStopButton from './EmergencyStopButton'
 
 const navItems = [
   { path: '/', label: '대시보드', icon: Home },
-  { path: '/chart/BTC', label: '차트', icon: TrendingUp },
+  { path: '/chart/BTCUSDT', label: '차트', icon: TrendingUp },
   { path: '/strategies', label: '전략', icon: Zap },
   { path: '/ai-advisor', label: 'AI 자문', icon: Brain },
   { path: '/orders', label: '주문', icon: ShoppingCart },

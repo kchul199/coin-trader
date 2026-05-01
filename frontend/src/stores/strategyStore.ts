@@ -1,14 +1,15 @@
 import { create } from 'zustand'
-import { Strategy } from '@/types'
+import { Strategy, StrategyUpdatePayload, StrategyUpsertPayload } from '@/types'
 import { strategiesApi } from '@/api/endpoints/strategies'
+import { getErrorMessage } from '@/utils/error'
 
 interface StrategyStore {
   strategies: Strategy[]
   loading: boolean
   error: string | null
   fetchStrategies: () => Promise<void>
-  createStrategy: (data: Partial<Strategy>) => Promise<Strategy>
-  updateStrategy: (id: string, data: Partial<Strategy>) => Promise<Strategy>
+  createStrategy: (data: StrategyUpsertPayload) => Promise<Strategy>
+  updateStrategy: (id: string, data: StrategyUpdatePayload) => Promise<Strategy>
   deleteStrategy: (id: string) => Promise<void>
   toggleStrategy: (id: string) => Promise<void>
 }
@@ -23,8 +24,8 @@ export const useStrategyStore = create<StrategyStore>((set) => ({
     try {
       const res = await strategiesApi.list()
       set({ strategies: res.data, loading: false })
-    } catch (e: any) {
-      set({ error: e.message, loading: false })
+    } catch (error: unknown) {
+      set({ error: getErrorMessage(error), loading: false })
     }
   },
 

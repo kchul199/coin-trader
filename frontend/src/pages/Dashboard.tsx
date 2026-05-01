@@ -31,10 +31,15 @@ function PriceCard({ symbol, price, change }: PriceCardProps) {
 
 export default function Dashboard() {
   useWebSocket()
-  const { prices, changes, wsConnected } = usePriceStore()
-  const { strategies, fetchStrategies } = useStrategyStore()
+  const prices = usePriceStore((s) => s.prices)
+  const changes = usePriceStore((s) => s.changes)
+  const wsConnected = usePriceStore((s) => s.wsConnected)
+  const strategies = useStrategyStore((s) => s.strategies)
+  const fetchStrategies = useStrategyStore((s) => s.fetchStrategies)
 
-  useEffect(() => { fetchStrategies() }, [])
+  useEffect(() => {
+    void fetchStrategies()
+  }, [fetchStrategies])
 
   const activeStrategies = strategies.filter((s) => s.is_active)
 

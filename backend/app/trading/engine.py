@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
@@ -180,7 +181,7 @@ class TradingEngine:
 
     async def _load_strategy(self, strategy_id: str) -> Optional[Strategy]:
         result = await self.db.execute(
-            select(Strategy).where(Strategy.id == strategy_id)
+            select(Strategy).where(Strategy.id == uuid.UUID(strategy_id))
         )
         return result.scalar_one_or_none()
 
@@ -199,14 +200,21 @@ class TradingEngine:
 
     async def _get_current_price(self, symbol: str) -> Optional[Decimal]:
         """Redis 캐시 우선 → ccxt 폴백"""
-        cache_key = f"price:{self.settings.EXCHANGE_ID}:{symbol}"
+        cache_key = f"price:{self.settings.EXCHANGE_ID}:{symbol.replace('/', '')}"
         raw = await self.redis.get(cache_key)
         if raw:
             try:
                 data = json.loads(raw)
-                return Decimal(str(data.get("price") or data.get("last") or 0))
+                if isinstance(data, dict):
+                    price = data.get("price") or data.get("last") or data.get("close")
+                else:
+                    price = data
+                return Decimal(str(price)) if price else None
             except Exception:
-                pass
+                try:
+                    return Decimal(str(raw))
+                except Exception:
+                    pass
 
         try:
             ticker = await self.exchange.get_ticker(symbol)
@@ -391,8 +399,8 @@ class TradingEngine:
                 return
 
             consult = AiConsultation(
-                strategy_id=strategy_id,
-                order_id=order_id,
+                strategy_id=uuid.UUID(strategy_id),
+                order_id=uuid.UUID(order_id) if order_id else None,
                 model="claude-opus-4-6",
                 prompt_version=str(cached.get("prompt_version", 1)),
                 decision=cached.get("decision", "execute"),

@@ -2,8 +2,8 @@
 
 BINANCE_TESTNET_URLS = {
     "api": {
-        "public": "https://testnet.binance.vision/api",
-        "private": "https://testnet.binance.vision/api",
+        "public": "https://testnet.binance.vision/api/v3",
+        "private": "https://testnet.binance.vision/api/v3",
     },
     "fapiPublic": "https://testnet.binancefuture.com/fapi",
     "fapiPrivate": "https://testnet.binancefuture.com/fapi",

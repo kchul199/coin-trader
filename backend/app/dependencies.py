@@ -13,7 +13,7 @@ from app.models.user import User
 
 async def get_db() -> AsyncSession:
     """Get database session dependency."""
-    async with get_db_session() as session:
+    async for session in get_db_session():
         yield session
 
 

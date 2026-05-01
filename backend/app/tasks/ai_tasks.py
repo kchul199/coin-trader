@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 
 from celery import shared_task
 from sqlalchemy import select
@@ -42,13 +43,14 @@ def refresh_ai_advice_task(self, strategy_id: str):
         from app.trading.ai_consultant import AIConsultant
 
         redis = await get_redis()
-        exchange = await create_exchange_adapter(settings)
+        exchange = None
 
         try:
+            exchange = create_exchange_adapter()
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Strategy).where(
-                        Strategy.id == strategy_id,
+                        Strategy.id == uuid.UUID(strategy_id),
                         Strategy.is_active.is_(True),
                         Strategy.ai_mode != "off",
                     )
@@ -127,7 +129,8 @@ def refresh_ai_advice_task(self, strategy_id: str):
                 )
                 return result_data or {}
         finally:
-            await exchange.close()
+            if exchange is not None:
+                await exchange.close()
 
     return _run_async(_run())
 

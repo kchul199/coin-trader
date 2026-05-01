@@ -6,13 +6,14 @@ alembic==1.13.2
 pydantic-settings==2.5.2
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 pyotp==2.9.0
 qrcode[pil]==7.4.2
 anthropic==0.39.0
 ccxt==4.4.13
 celery[redis]==5.4.0
 redis[hiredis]==5.1.1
-redbeat==2.2.0
+celery-redbeat==2.3.3
 pandas==2.2.2
 ta==0.11.0
 httpx==0.27.2

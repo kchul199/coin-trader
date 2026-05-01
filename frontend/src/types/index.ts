@@ -7,14 +7,26 @@ export interface Candle {
   volume: number;
 }
 
+export type ConditionParamValue = string | number | boolean | null | undefined;
+
+export interface SerializedConditionNode {
+  operator?: string;
+  conditions?: SerializedConditionNode[];
+  indicator?: string;
+  params?: Record<string, ConditionParamValue>;
+  compareOperator?: string;
+  value?: number;
+  compare_to?: string;
+}
+
 export interface Strategy {
   id: string;
   name: string;
   symbol: string;
   timeframe: string;
-  condition_tree: ConditionNode;
+  condition_tree: SerializedConditionNode;
   order_config: OrderConfig;
-  exit_condition?: ConditionNode;
+  exit_condition?: SerializedConditionNode;
   ai_mode: 'off' | 'auto' | 'semi_auto' | 'observe';
   priority: number;
   hold_retry_interval: number;
@@ -28,11 +40,27 @@ export interface ConditionNode {
   operator?: 'AND' | 'OR';
   conditions?: ConditionNode[];
   indicator?: string;
-  params?: Record<string, any>;
+  params?: Record<string, ConditionParamValue>;
   compareOperator?: string;
   value?: number;
   compare_to?: string;
 }
+
+export interface StrategyUpsertPayload {
+  name: string;
+  symbol: string;
+  timeframe: string;
+  condition_tree: SerializedConditionNode;
+  order_config: OrderConfig;
+  exit_condition?: SerializedConditionNode;
+  ai_mode: Strategy['ai_mode'];
+  priority: number;
+  hold_retry_interval?: number;
+  hold_max_retry?: number;
+  is_active?: boolean;
+}
+
+export type StrategyUpdatePayload = Partial<StrategyUpsertPayload>;
 
 export interface OrderConfig {
   side: 'buy' | 'sell';

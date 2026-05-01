@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Brain } from 'lucide-react'
 import { aiAdvisorApi, AiConsultation, AiStats } from '@/api/endpoints/ai_advisor'
 import { useStrategyStore } from '@/stores/strategyStore'
@@ -23,6 +23,7 @@ const RISK_LABELS: Record<string, string> = {
   medium: '보통',
   high: '높음',
 }
+const CONSULTATION_LIMIT = 10
 
 function DecisionBadge({ decision }: { decision: string }) {
   const color = DECISION_COLORS[decision] || 'text-gray-400 bg-gray-700 border-gray-700'
@@ -115,7 +116,8 @@ function StatsPanel({ stats }: { stats: AiStats }) {
 }
 
 export default function AiAdvisor() {
-  const { strategies, fetchStrategies } = useStrategyStore()
+  const strategies = useStrategyStore((s) => s.strategies)
+  const fetchStrategies = useStrategyStore((s) => s.fetchStrategies)
   const [consultations, setConsultations] = useState<AiConsultation[]>([])
   const [stats, setStats] = useState<AiStats | null>(null)
   const [loading, setLoading] = useState(false)
@@ -123,21 +125,20 @@ export default function AiAdvisor() {
   const [decisionFilter, setDecisionFilter] = useState<string>('')
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
-  const limit = 10
   const [refreshing, setRefreshing] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchStrategies()
-  }, [])
+    void fetchStrategies()
+  }, [fetchStrategies])
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [consultRes, statsRes] = await Promise.all([
         aiAdvisorApi.listConsultations({
           strategy_id: selectedStrategy || undefined,
           decision: decisionFilter || undefined,
-          limit,
+          limit: CONSULTATION_LIMIT,
           offset,
         }),
         aiAdvisorApi.getStats(selectedStrategy || undefined),
@@ -150,17 +151,19 @@ export default function AiAdvisor() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [decisionFilter, offset, selectedStrategy])
 
   useEffect(() => {
-    loadData()
-  }, [selectedStrategy, decisionFilter, offset])
+    void loadData()
+  }, [loadData])
 
   const handleRefresh = async (strategyId: string) => {
     setRefreshing(strategyId)
     try {
       await aiAdvisorApi.refresh(strategyId)
-      setTimeout(loadData, 3000) // 3초 후 갱신
+      window.setTimeout(() => {
+        void loadData()
+      }, 3000)
     } catch (e) {
       console.error(e)
     } finally {
@@ -179,7 +182,9 @@ export default function AiAdvisor() {
           AI 자문
         </h1>
         <button
-          onClick={loadData}
+          onClick={() => {
+            void loadData()
+          }}
           disabled={loading}
           className="p-2 bg-gray-800 border border-gray-700 rounded hover:bg-gray-700 text-gray-400 disabled:opacity-50"
         >
@@ -274,21 +279,21 @@ export default function AiAdvisor() {
         )}
 
         {/* 페이지네이션 */}
-        {total > limit && (
+        {total > CONSULTATION_LIMIT && (
           <div className="flex justify-center gap-2 mt-4">
             <button
-              onClick={() => setOffset(Math.max(0, offset - limit))}
+              onClick={() => setOffset(Math.max(0, offset - CONSULTATION_LIMIT))}
               disabled={offset === 0}
               className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white rounded text-sm disabled:opacity-40"
             >
               이전
             </button>
             <span className="px-3 py-1.5 text-sm text-gray-400">
-              {Math.floor(offset / limit) + 1} / {Math.ceil(total / limit)}
+              {Math.floor(offset / CONSULTATION_LIMIT) + 1} / {Math.ceil(total / CONSULTATION_LIMIT)}
             </span>
             <button
-              onClick={() => setOffset(offset + limit)}
-              disabled={offset + limit >= total}
+              onClick={() => setOffset(offset + CONSULTATION_LIMIT)}
+              disabled={offset + CONSULTATION_LIMIT >= total}
               className="px-3 py-1.5 bg-gray-800 border border-gray-700 text-white rounded text-sm disabled:opacity-40"
             >
               다음

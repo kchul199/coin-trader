@@ -3,6 +3,7 @@ import { AlertCircle, Loader2 } from 'lucide-react'
 import { emergencyApi } from '@/api/endpoints/emergency'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useStrategyStore } from '@/stores/strategyStore'
+import { getErrorMessage } from '@/utils/error'
 
 export default function EmergencyStopButton() {
   const [loading, setLoading] = useState(false)
@@ -25,11 +26,11 @@ export default function EmergencyStopButton() {
         message: '모든 전략이 긴급 정지되었습니다.',
       })
       await fetchStrategies()
-    } catch (err: any) {
+    } catch (error: unknown) {
       addNotification({
         type: 'error',
         title: '긴급 정지 실패',
-        message: err?.response?.data?.detail || '긴급 정지 중 오류가 발생했습니다.',
+        message: getErrorMessage(error, '긴급 정지 중 오류가 발생했습니다.'),
       })
     } finally {
       setLoading(false)

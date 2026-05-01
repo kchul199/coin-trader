@@ -15,7 +15,9 @@ async def get_redis() -> redis.Redis:
     """
     global _redis_client
     if _redis_client is None:
-        _redis_client = await redis.from_url(settings.REDIS_URL, decode_responses=True)
+        client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        await client.ping()
+        _redis_client = client
     return _redis_client
 
 
@@ -23,5 +25,9 @@ async def close_redis() -> None:
     """Close the Redis connection."""
     global _redis_client
     if _redis_client:
-        await _redis_client.close()
+        close = getattr(_redis_client, "aclose", None)
+        if close is not None:
+            await close()
+        else:
+            await _redis_client.close()
         _redis_client = None

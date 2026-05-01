@@ -4,7 +4,9 @@ import client from '@/api/client'
 interface User {
   id: string
   email: string
-  username: string
+  is_active: boolean
+  has_2fa: boolean
+  created_at: string
 }
 
 interface AuthState {
@@ -24,8 +26,19 @@ export const useAuthStore = create<AuthState>((set) => ({
   login: async (email: string, password: string) => {
     try {
       const response = await client.post('/auth/login', { email, password })
-      const { access_token, user } = response.data
+      const { access_token } = response.data
       localStorage.setItem('token', access_token)
+
+      let user: User | null = null
+      try {
+        const meResponse = await client.get('/auth/me', {
+          headers: { Authorization: `Bearer ${access_token}` },
+        })
+        user = meResponse.data
+      } catch (profileError) {
+        console.warn('Failed to fetch user profile after login:', profileError)
+      }
+
       set({
         token: access_token,
         user,

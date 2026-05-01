@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 
 from celery import shared_task
 from sqlalchemy import select
@@ -121,7 +122,7 @@ def evaluate_hold_queue():
             # max_retry 확인
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(Strategy).where(Strategy.id == strategy_id)
+                    select(Strategy).where(Strategy.id == uuid.UUID(strategy_id))
                 )
                 strategy = result.scalar_one_or_none()
                 max_retry = strategy.hold_max_retry if strategy else 3
@@ -174,7 +175,7 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
                 # DB 전략 비활성화
                 await db.execute(
                     sql_update(Strategy)
-                    .where(Strategy.id == strategy_id)
+                    .where(Strategy.id == uuid.UUID(strategy_id))
                     .values(is_active=False)
                 )
                 await db.commit()
@@ -185,7 +186,7 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
                 # 미체결 주문 조회
                 result = await db.execute(
                     select(Order).where(
-                        Order.strategy_id == strategy_id,
+                        Order.strategy_id == uuid.UUID(strategy_id),
                         Order.status.in_(["open", "pending"]),
                     )
                 )
@@ -213,8 +214,8 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
 
                 # 긴급 정지 이력 저장
                 stop_record = EmergencyStop(
-                    strategy_id=strategy_id,
-                    user_id=user_id,
+                    strategy_id=uuid.UUID(strategy_id),
+                    user_id=uuid.UUID(user_id),
                     reason=reason,
                     cancelled_orders=order_ids,
                 )

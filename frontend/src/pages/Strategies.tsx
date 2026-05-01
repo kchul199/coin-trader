@@ -3,28 +3,46 @@ import { Plus, RefreshCw } from 'lucide-react'
 import { useStrategyStore } from '@/stores/strategyStore'
 import { StrategyCard } from '@/components/strategy/StrategyCard'
 import { ConditionBuilder } from '@/components/strategy/ConditionBuilder'
-import { Strategy, ConditionNode, OrderConfig } from '@/types'
+import { Strategy, ConditionNode, OrderConfig, SerializedConditionNode, StrategyUpsertPayload } from '@/types'
 
-const DEFAULT_CONDITION: ConditionNode = {
-  operator: 'AND',
-  conditions: [
-    { indicator: 'RSI', params: { timeframe: '1h', period: 14 }, compareOperator: 'lt', value: 30 },
-  ],
+function createDefaultCondition(): ConditionNode {
+  return {
+    operator: 'AND',
+    conditions: [
+      { indicator: 'RSI', params: { timeframe: '1h', period: 14 }, compareOperator: 'lt', value: 30 },
+    ],
+  }
 }
 
-const DEFAULT_ORDER: OrderConfig = {
-  side: 'buy',
-  type: 'market',
-  quantity_type: 'balance_pct',
-  quantity_value: 10,
-  take_profit_pct: 4,
-  stop_loss_pct: 2,
+function createDefaultOrder(): OrderConfig {
+  return {
+    side: 'buy',
+    type: 'market',
+    quantity_type: 'balance_pct',
+    quantity_value: 10,
+    take_profit_pct: 4,
+    stop_loss_pct: 2,
+  }
 }
 
-function convertBuilderToTree(node: ConditionNode): any {
-  if (node.operator) {
+function isGroupNode(node: ConditionNode | SerializedConditionNode | null | undefined) {
+  return Array.isArray(node?.conditions)
+}
+
+function getLeafCompareTo(node: ConditionNode & { indicator?: string }) {
+  if (node.compare_to) {
+    return node.compare_to
+  }
+  if (node.indicator === 'VOLUME' && node.compareOperator === 'gt_multiple') {
+    return 'volume_ma_20'
+  }
+  return undefined
+}
+
+function convertBuilderToTree(node: ConditionNode): SerializedConditionNode {
+  if (isGroupNode(node)) {
     return {
-      operator: node.operator,
+      operator: node.operator || 'AND',
       conditions: (node.conditions || []).map(convertBuilderToTree),
     }
   }
@@ -33,12 +51,37 @@ function convertBuilderToTree(node: ConditionNode): any {
     params: node.params || {},
     operator: node.compareOperator,
     value: node.value,
+    compare_to: getLeafCompareTo(node),
+  }
+}
+
+function convertTreeToBuilder(node?: SerializedConditionNode | null): ConditionNode {
+  if (!node) {
+    return createDefaultCondition()
+  }
+
+  if (isGroupNode(node)) {
+    return {
+      operator: node.operator === 'OR' ? 'OR' : 'AND',
+      conditions: (node.conditions || []).map(convertTreeToBuilder),
+    }
+  }
+
+  return {
+    indicator: node.indicator,
+    params: node.params || {},
+    compareOperator: node.compareOperator || node.operator,
+    value: node.value,
     compare_to: node.compare_to,
   }
 }
 
 export default function Strategies() {
-  const { strategies, loading, fetchStrategies, createStrategy, updateStrategy } = useStrategyStore()
+  const strategies = useStrategyStore((s) => s.strategies)
+  const loading = useStrategyStore((s) => s.loading)
+  const fetchStrategies = useStrategyStore((s) => s.fetchStrategies)
+  const createStrategy = useStrategyStore((s) => s.createStrategy)
+  const updateStrategy = useStrategyStore((s) => s.updateStrategy)
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<Strategy | null>(null)
 
@@ -48,11 +91,13 @@ export default function Strategies() {
   const [timeframe, setTimeframe] = useState('1h')
   const [aiMode, setAiMode] = useState<Strategy['ai_mode']>('off')
   const [priority, setPriority] = useState(5)
-  const [conditionTree, setConditionTree] = useState<ConditionNode>(DEFAULT_CONDITION)
-  const [orderConfig, setOrderConfig] = useState<OrderConfig>(DEFAULT_ORDER)
+  const [conditionTree, setConditionTree] = useState<ConditionNode>(createDefaultCondition())
+  const [orderConfig, setOrderConfig] = useState<OrderConfig>(createDefaultOrder())
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { fetchStrategies() }, [])
+  useEffect(() => {
+    void fetchStrategies()
+  }, [fetchStrategies])
 
   const openCreate = () => {
     setEditing(null)
@@ -61,8 +106,8 @@ export default function Strategies() {
     setTimeframe('1h')
     setAiMode('off')
     setPriority(5)
-    setConditionTree(DEFAULT_CONDITION)
-    setOrderConfig(DEFAULT_ORDER)
+    setConditionTree(createDefaultCondition())
+    setOrderConfig(createDefaultOrder())
     setShowModal(true)
   }
 
@@ -73,8 +118,8 @@ export default function Strategies() {
     setTimeframe(s.timeframe)
     setAiMode(s.ai_mode)
     setPriority(s.priority)
-    setConditionTree(s.condition_tree || DEFAULT_CONDITION)
-    setOrderConfig(s.order_config || DEFAULT_ORDER)
+    setConditionTree(convertTreeToBuilder(s.condition_tree))
+    setOrderConfig(s.order_config || createDefaultOrder())
     setShowModal(true)
   }
 
@@ -82,7 +127,7 @@ export default function Strategies() {
     if (!name.trim()) return
     setSaving(true)
     try {
-      const payload = {
+      const payload: StrategyUpsertPayload = {
         name,
         symbol,
         timeframe,
@@ -172,7 +217,7 @@ export default function Strategies() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">AI 자문 모드</label>
-                  <select className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm" value={aiMode} onChange={(e) => setAiMode(e.target.value as any)}>
+                  <select className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm" value={aiMode} onChange={(e) => setAiMode(e.target.value as Strategy['ai_mode'])}>
                     <option value="off">끄기</option>
                     <option value="observe">의견만 참고</option>
                     <option value="semi_auto">반자동 (승인 필요)</option>
@@ -186,7 +231,7 @@ export default function Strategies() {
               <div className="grid grid-cols-2 gap-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">매수/매도</label>
-                  <select className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm" value={orderConfig.side} onChange={(e) => setOrderConfig({ ...orderConfig, side: e.target.value as any })}>
+                  <select className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm" value={orderConfig.side} onChange={(e) => setOrderConfig({ ...orderConfig, side: e.target.value as OrderConfig['side'] })}>
                     <option value="buy">매수</option>
                     <option value="sell">매도</option>
                   </select>
