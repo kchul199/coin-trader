@@ -39,13 +39,15 @@ async def create_account(
     if data.exchange_id not in ALLOWED_EXCHANGE_IDS:
         raise HTTPException(status_code=400, detail="허용되지 않은 거래소입니다.")
 
+    requested_testnet = data.is_testnet if data.exchange_id == "binance" else False
+
     # 연결 테스트
     try:
         adapter = CcxtAdapter(
             exchange_id=data.exchange_id,
             api_key=data.api_key,
             api_secret=data.api_secret,
-            testnet=data.is_testnet,
+            testnet=requested_testnet,
         )
         await adapter.get_balance()
         await adapter.close()
@@ -58,7 +60,7 @@ async def create_account(
         exchange_id=data.exchange_id,
         api_key_encrypted=encrypt_api_key(data.api_key),
         api_secret_encrypted=encrypt_api_key(data.api_secret),
-        is_testnet=data.is_testnet,
+        is_testnet=requested_testnet,
         is_active=True,
     )
     db.add(account)

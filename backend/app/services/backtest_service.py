@@ -23,6 +23,7 @@ import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+from app.models.ai_consultation import AIConsultation
 from app.models.backtest_result import BacktestResult
 from app.models.candle import Candle
 from app.models.strategy import Strategy
@@ -31,6 +32,7 @@ from app.trading.strategy_evaluator import StrategyEvaluator
 logger = logging.getLogger(__name__)
 
 RISK_FREE_RATE = 0.0  # 연 무위험이자율 (연율화 Sharpe용)
+BASE_LOOKBACK_CANDLES = 50
 
 
 @dataclass
@@ -54,6 +56,7 @@ class BacktestState:
     peak_capital: float
     position_qty: float = 0.0
     position_price: float = 0.0
+    position_peak_price: float = 0.0
     position_entry_time: str = ""
     trades: list[SimTrade] = field(default_factory=list)
     equity_curve: list[dict] = field(default_factory=list)
@@ -66,6 +69,26 @@ class BacktestService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.evaluator = StrategyEvaluator()
+
+    async def validate_strategy_input(
+        self,
+        strategy: Strategy,
+        start_date: date,
+        end_date: date,
+    ) -> int:
+        """백테스트 실행 전 캔들 수가 충분한지 검증하고 필요한 lookback을 반환한다."""
+        ohlcv_df = await self._load_candles(
+            symbol=strategy.symbol,
+            timeframe=strategy.timeframe,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        lookback = self._estimate_required_candles(
+            strategy.condition_tree,
+            strategy.exit_condition,
+        )
+        self._validate_candle_window(ohlcv_df, lookback)
+        return lookback
 
     async def run(
         self,
@@ -89,8 +112,11 @@ class BacktestService:
             end_date=end_date,
         )
 
-        if ohlcv_df.empty or len(ohlcv_df) < 30:
-            raise ValueError("백테스트에 필요한 충분한 캔들 데이터가 없습니다 (최소 30개 필요)")
+        lookback = self._estimate_required_candles(
+            strategy.condition_tree,
+            strategy.exit_condition,
+        )
+        self._validate_candle_window(ohlcv_df, lookback)
 
         # 3. 시뮬레이션 실행
         state = BacktestState(
@@ -104,8 +130,7 @@ class BacktestService:
             "order_config": strategy.order_config,
             "ai_mode": strategy.ai_mode,
         }
-
-        await asyncio.get_event_loop().run_in_executor(
+        base_summary = await asyncio.get_event_loop().run_in_executor(
             None,
             self._simulate,
             state,
@@ -116,10 +141,74 @@ class BacktestService:
             commission_pct,
             slippage_pct,
             initial_capital,
+            lookback,
+            strategy.timeframe,
+            None,
+            "off",
         )
 
         # 4. 성과 지표 계산
         metrics = self._calculate_metrics(state, initial_capital, ohlcv_df)
+        selected_state = state
+        selected_metrics = metrics
+        ai_off_return_pct = round(metrics["total_return_pct"], 2)
+        ai_on_return_pct: float | None = None
+
+        if strategy.ai_mode == "observe":
+            ai_on_return_pct = ai_off_return_pct
+            params_snapshot["ai_compare"] = {
+                "mode": "observe",
+                "status": "same_as_off",
+                "entry_signals": base_summary["entry_signals"],
+            }
+        elif strategy.ai_mode != "off":
+            ai_decisions = await self._load_ai_backtest_decisions(
+                strategy.id,
+                strategy.timeframe,
+                start_date,
+                end_date,
+            )
+            if ai_decisions:
+                ai_state = BacktestState(
+                    capital=initial_capital,
+                    peak_capital=initial_capital,
+                )
+                ai_summary = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    self._simulate,
+                    ai_state,
+                    ohlcv_df,
+                    strategy.condition_tree,
+                    strategy.exit_condition,
+                    strategy.order_config,
+                    commission_pct,
+                    slippage_pct,
+                    initial_capital,
+                    lookback,
+                    strategy.timeframe,
+                    ai_decisions,
+                    strategy.ai_mode,
+                )
+                ai_metrics = self._calculate_metrics(ai_state, initial_capital, ohlcv_df)
+                ai_on_return_pct = round(ai_metrics["total_return_pct"], 2)
+                selected_state = ai_state
+                selected_metrics = ai_metrics
+                params_snapshot["ai_compare"] = {
+                    "mode": "offline_cached",
+                    "status": "applied",
+                    "cached_buckets": len(ai_decisions),
+                    "entry_signals": ai_summary["entry_signals"],
+                    "decision_hits": ai_summary["decision_hits"],
+                    "ai_skips": ai_summary["ai_skips"],
+                    "semi_auto_assumption": "execute decisions auto-approved"
+                    if strategy.ai_mode == "semi_auto"
+                    else None,
+                }
+            else:
+                params_snapshot["ai_compare"] = {
+                    "mode": "offline_cached",
+                    "status": "no_cached_consultations",
+                }
 
         # 5. DB 저장
         result = BacktestResult(
@@ -129,19 +218,19 @@ class BacktestService:
             end_date=end_date,
             params_snapshot=params_snapshot,
             initial_capital=Decimal(str(initial_capital)),
-            final_capital=Decimal(str(round(state.capital, 2))),
-            total_return_pct=Decimal(str(round(metrics["total_return_pct"], 2))),
-            max_drawdown_pct=Decimal(str(round(metrics["max_drawdown_pct"], 2))),
-            sharpe_ratio=Decimal(str(round(metrics["sharpe_ratio"], 4))),
-            win_rate=Decimal(str(round(metrics["win_rate"], 2))),
-            profit_factor=Decimal(str(round(metrics["profit_factor"], 2))),
-            total_trades=metrics["total_trades"],
-            ai_on_return_pct=None,
-            ai_off_return_pct=None,
+            final_capital=Decimal(str(round(selected_state.capital, 2))),
+            total_return_pct=Decimal(str(round(selected_metrics["total_return_pct"], 2))),
+            max_drawdown_pct=Decimal(str(round(selected_metrics["max_drawdown_pct"], 2))),
+            sharpe_ratio=Decimal(str(round(selected_metrics["sharpe_ratio"], 4))),
+            win_rate=Decimal(str(round(selected_metrics["win_rate"], 2))),
+            profit_factor=Decimal(str(round(selected_metrics["profit_factor"], 2))),
+            total_trades=selected_metrics["total_trades"],
+            ai_on_return_pct=Decimal(str(ai_on_return_pct)) if ai_on_return_pct is not None else None,
+            ai_off_return_pct=Decimal(str(ai_off_return_pct)),
             commission_pct=Decimal(str(commission_pct)),
             slippage_pct=Decimal(str(slippage_pct)),
-            equity_curve=state.equity_curve,
-            trade_history=[self._trade_to_dict(t) for t in state.trades],
+            equity_curve=selected_state.equity_curve,
+            trade_history=[self._trade_to_dict(t) for t in selected_state.trades],
         )
 
         self.db.add(result)
@@ -151,8 +240,8 @@ class BacktestService:
         logger.info(
             "Backtest complete: strategy=%s return=%.2f%% trades=%d",
             strategy_id,
-            metrics["total_return_pct"],
-            metrics["total_trades"],
+            selected_metrics["total_return_pct"],
+            selected_metrics["total_trades"],
         )
         return result
 
@@ -220,9 +309,15 @@ class BacktestService:
         commission_pct: float,
         slippage_pct: float,
         initial_capital: float,
-    ) -> None:
+        lookback: int,
+        timeframe: str,
+        ai_decisions: dict[str, str] | None,
+        ai_mode: str,
+    ) -> dict[str, int]:
         """캔들 순회 시뮬레이션 (동기 — executor에서 실행)"""
-        lookback = 50  # 지표 계산에 필요한 최소 캔들 수
+        entry_signals = 0
+        decision_hits = 0
+        ai_skips = 0
 
         for i in range(lookback, len(ohlcv)):
             window = ohlcv.iloc[: i + 1]
@@ -234,6 +329,8 @@ class BacktestService:
             # ─── 포지션 보유 중: 청산 조건 확인 ───
             if state.position_qty > 0:
                 should_exit = False
+                cfg = order_config or {}
+                state.position_peak_price = max(state.position_peak_price, close_price)
 
                 # 커스텀 청산 조건
                 if exit_condition:
@@ -245,15 +342,24 @@ class BacktestService:
                         pass
 
                 # 고정 청산 조건: stop_loss / take_profit
-                cfg = order_config or {}
                 if not should_exit:
                     stop_loss_pct = cfg.get("stop_loss_pct")
                     take_profit_pct = cfg.get("take_profit_pct")
+                    trailing_stop_pct = cfg.get("trailing_stop_pct")
                     if stop_loss_pct and state.position_price > 0:
                         if close_price <= state.position_price * (1 - stop_loss_pct / 100):
                             should_exit = True
                     if take_profit_pct and state.position_price > 0 and not should_exit:
                         if close_price >= state.position_price * (1 + take_profit_pct / 100):
+                            should_exit = True
+                    if (
+                        cfg.get("trailing_stop")
+                        and trailing_stop_pct
+                        and state.position_peak_price > 0
+                        and not should_exit
+                    ):
+                        trailing_stop_price = state.position_peak_price * (1 - trailing_stop_pct / 100)
+                        if close_price <= trailing_stop_price:
                             should_exit = True
 
                 if should_exit:
@@ -269,9 +375,21 @@ class BacktestService:
                     entry_result = None
 
                 if entry_result and entry_result.matched:
-                    self._open_position(
-                        state, close_price, ts_str, order_config, commission_pct, slippage_pct
-                    )
+                    entry_signals += 1
+                    should_execute = True
+                    if ai_mode in {"auto", "semi_auto"} and ai_decisions:
+                        bucket = self._bucket_timestamp(ts, timeframe)
+                        decision = ai_decisions.get(bucket)
+                        if decision:
+                            decision_hits += 1
+                            if decision != "execute":
+                                ai_skips += 1
+                                should_execute = False
+
+                    if should_execute:
+                        self._open_position(
+                            state, close_price, ts_str, order_config, commission_pct, slippage_pct
+                        )
 
             # ─── 자산 곡선 기록 ───
             portfolio_value = state.capital
@@ -294,6 +412,12 @@ class BacktestService:
             last_ts_str = last_ts.isoformat() if hasattr(last_ts, "isoformat") else str(last_ts)
             self._close_position(state, last_close, last_ts_str, commission_pct, slippage_pct)
 
+        return {
+            "entry_signals": entry_signals,
+            "decision_hits": decision_hits,
+            "ai_skips": ai_skips,
+        }
+
     def _open_position(
         self,
         state: BacktestState,
@@ -305,27 +429,138 @@ class BacktestService:
     ) -> None:
         """가상 매수 체결"""
         cfg = order_config or {}
-        entry_type = cfg.get("type", "balance_pct")
+        entry_type = cfg.get("quantity_type") or cfg.get("type") or "balance_pct"
+        if entry_type == "fixed_usdt":
+            entry_type = "fixed_amount"
         slipped_price = price * (1 + slippage_pct / 100)
 
+        quantity_value = cfg.get("quantity_value")
+        trade_amount = 0.0
+        qty = 0.0
+
         if entry_type == "balance_pct":
-            pct = float(cfg.get("balance_pct", 10)) / 100
+            raw_value = quantity_value if quantity_value is not None else cfg.get("balance_pct", 10)
+            pct = max(float(raw_value), 0.0) / 100
             trade_amount = state.capital * pct
         elif entry_type == "fixed_amount":
-            trade_amount = min(float(cfg.get("amount", 100)), state.capital)
+            raw_value = quantity_value if quantity_value is not None else cfg.get("amount", 100)
+            trade_amount = min(max(float(raw_value), 0.0), state.capital)
+        elif entry_type == "fixed_qty":
+            raw_value = quantity_value if quantity_value is not None else cfg.get("qty", 0)
+            requested_qty = max(float(raw_value), 0.0)
+            trade_amount = requested_qty * slipped_price
+            commission = trade_amount * (commission_pct / 100)
+            qty = max(requested_qty - (commission / slipped_price), 0.0) if slipped_price > 0 else 0.0
         else:
             trade_amount = state.capital * 0.1  # 기본 10%
 
         if trade_amount <= 0 or state.capital < trade_amount:
             return
 
-        commission = trade_amount * (commission_pct / 100)
-        qty = (trade_amount - commission) / slipped_price
+        if entry_type != "fixed_qty":
+            commission = trade_amount * (commission_pct / 100)
+            qty = (trade_amount - commission) / slipped_price if slipped_price > 0 else 0.0
+
+        if qty <= 0:
+            return
 
         state.capital -= (trade_amount)
         state.position_qty = qty
         state.position_price = slipped_price
+        state.position_peak_price = slipped_price
         state.position_entry_time = ts
+
+    def _estimate_required_candles(
+        self,
+        condition_tree: dict | None,
+        exit_condition: dict | None,
+    ) -> int:
+        """조건 트리를 기준으로 필요한 최소 캔들 수를 보수적으로 추정한다."""
+        required = BASE_LOOKBACK_CANDLES
+        for tree in (condition_tree, exit_condition):
+            required = max(required, self._estimate_tree_candles(tree))
+        return required
+
+    def _estimate_tree_candles(self, node: dict | None) -> int:
+        if not node:
+            return BASE_LOOKBACK_CANDLES
+
+        children = node.get("conditions") or node.get("children") or []
+        if children:
+            return max((self._estimate_tree_candles(child) for child in children), default=BASE_LOOKBACK_CANDLES)
+
+        indicator = node.get("indicator")
+        params = node.get("params", {})
+        operator = node.get("operator")
+
+        if indicator in {"RSI", "MA", "EMA", "CCI"}:
+            return max(BASE_LOOKBACK_CANDLES, int(params.get("period", 20)) + 5)
+        if indicator == "BB":
+            return max(BASE_LOOKBACK_CANDLES, int(params.get("period", 20)) + 5)
+        if indicator == "MACD":
+            slow_period = int(params.get("slow_period", 26))
+            signal_period = int(params.get("signal_period", 9))
+            return max(BASE_LOOKBACK_CANDLES, slow_period + signal_period + 5)
+        if indicator == "STOCH":
+            k_period = int(params.get("k_period", 14))
+            d_period = int(params.get("d_period", 3))
+            return max(BASE_LOOKBACK_CANDLES, k_period + d_period + 5)
+        if indicator == "VOLUME" and operator == "gt_multiple":
+            return max(BASE_LOOKBACK_CANDLES, 25)
+
+        return BASE_LOOKBACK_CANDLES
+
+    def _validate_candle_window(self, ohlcv_df: pd.DataFrame, lookback: int) -> None:
+        candle_count = len(ohlcv_df)
+        if candle_count == 0:
+            raise ValueError("백테스트 기간에 해당하는 캔들 데이터가 없습니다.")
+        if candle_count < lookback:
+            raise ValueError(
+                f"백테스트 캔들 데이터가 부족합니다. 최소 {lookback}개가 필요하지만 현재 {candle_count}개입니다."
+            )
+
+    async def _load_ai_backtest_decisions(
+        self,
+        strategy_id: uuid.UUID,
+        timeframe: str,
+        start_date: date,
+        end_date: date,
+    ) -> dict[str, str]:
+        start_dt = datetime(start_date.year, start_date.month, start_date.day, tzinfo=timezone.utc)
+        end_dt = datetime(end_date.year, end_date.month, end_date.day, 23, 59, 59, tzinfo=timezone.utc)
+
+        result = await self.db.execute(
+            select(AIConsultation)
+            .where(
+                AIConsultation.strategy_id == strategy_id,
+                AIConsultation.created_at >= start_dt,
+                AIConsultation.created_at <= end_dt,
+            )
+            .order_by(AIConsultation.created_at.asc())
+        )
+        consultations = result.scalars().all()
+        if not consultations:
+            return {}
+
+        decisions: dict[str, str] = {}
+        for consultation in consultations:
+            bucket = self._bucket_timestamp(consultation.created_at, timeframe)
+            decisions[bucket] = consultation.decision
+        return decisions
+
+    def _bucket_timestamp(self, value: Any, timeframe: str) -> str:
+        freq_map = {
+            "1m": "1min",
+            "3m": "3min",
+            "5m": "5min",
+            "15m": "15min",
+            "30m": "30min",
+            "1h": "1h",
+            "4h": "4h",
+            "1d": "1d",
+        }
+        freq = freq_map.get(timeframe, "1h")
+        return pd.Timestamp(value).floor(freq).isoformat()
 
     def _close_position(
         self,
@@ -363,6 +598,7 @@ class BacktestService:
         state.capital += net_proceeds
         state.position_qty = 0.0
         state.position_price = 0.0
+        state.position_peak_price = 0.0
         state.position_entry_time = ""
 
     def _calculate_metrics(

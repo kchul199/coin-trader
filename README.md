@@ -107,14 +107,25 @@ coin-trader/
 |------|------|
 | `POST /api/v1/auth/register` | 회원가입 |
 | `POST /api/v1/auth/login` | 로그인 (JWT 토큰 발급) |
+| `GET /api/v1/auth/me` | 현재 로그인 사용자 정보 |
+| `POST /api/v1/auth/2fa/setup` | 2FA 설정 시작 (Secret/otpauth URI 발급) |
+| `POST /api/v1/auth/2fa/verify` | 2FA 활성화 완료 |
+| `GET /api/v1/exchange/accounts` | 연결된 거래소 계정 목록 |
+| `POST /api/v1/exchange/accounts` | 거래소 API 키 등록 |
+| `GET /api/v1/exchange/balance` | 현재 잔고 조회 |
+| `POST /api/v1/exchange/balance/sync` | 잔고 강제 동기화 |
 | `GET /api/v1/strategies` | 전략 목록 조회 |
 | `POST /api/v1/strategies` | 새 전략 생성 |
 | `GET /api/v1/portfolio` | 내 포트폴리오 조회 |
 | `GET /api/v1/orders` | 주문 내역 조회 |
-| `GET /api/v1/charts/candles` | 차트용 캔들 데이터 조회 |
-| `POST /api/v1/backtest` | 백테스트 실행 |
-| `POST /api/v1/ai-advisor/consult` | AI 자문 요청 |
-| `POST /api/v1/emergency/stop` | 긴급 정지 |
+| `GET /api/v1/chart/{symbol}/candles` | 차트용 캔들 데이터 조회 |
+| `GET /api/v1/chart/{symbol}/ticker` | 현재 가격 조회 |
+| `POST /api/v1/backtest/run` | 백테스트 실행 |
+| `GET /api/v1/backtest/status/{job_id}` | 백테스트 상태 조회 |
+| `GET /api/v1/ai-advisor/stats` | AI 자문 통계 |
+| `POST /api/v1/ai-advisor/refresh/{strategy_id}` | 특정 전략 AI 자문 갱신 |
+| `GET /api/v1/emergency/status` | 긴급 정지 상태 조회 |
+| `POST /api/v1/emergency/stop/{strategy_id}` | 전략 긴급 정지 |
 | `GET /health` | 서버 상태 확인 |
 | `WS /ws` | 실시간 가격 WebSocket |
 
@@ -231,8 +242,8 @@ openssl rand -hex 32
 | 변수 | 언제 필요한가? | 발급처 |
 |------|---------------|--------|
 | `ANTHROPIC_API_KEY` | AI 자문 기능 사용 시 | https://console.anthropic.com/settings/keys |
-| `API_KEY` | 바이낸스에서 실제 거래 시 | https://testnet.binancefuture.com |
-| `API_SECRET` | 바이낸스에서 실제 거래 시 | 위와 동일 |
+| `API_KEY` | 업비트 계정을 연결할 때 | https://docs.upbit.com/ |
+| `API_SECRET` | 업비트 계정을 연결할 때 | 위와 동일 |
 
 > **처음 시작하는 분:** 위 선택 항목은 비워두셔도 됩니다. 회원가입, 로그인, 전략 만들기, 백테스트, UI 둘러보기는 이 키 없이도 모두 동작합니다. 나중에 실제 매매를 시도할 때 추가하면 됩니다.
 
@@ -324,7 +335,7 @@ docker compose exec backend python -m scripts.seed_candles
 
 ```bash
 docker compose exec backend python -m scripts.seed_candles \
-  --symbols "BTC/USDT,ETH/USDT" \
+  --symbols "BTC/KRW,ETH/KRW" \
   --timeframes "1h,4h,1d" \
   --days 180
 ```
@@ -376,28 +387,41 @@ bash scripts/test_docker.sh
 3. Redis가 응답하는지
 4. Backend API의 헬스 체크와 Swagger UI가 동작하는지
 5. 회원가입 → 로그인 → JWT 토큰 발급이 정상인지
-6. 토큰을 사용한 인증 API (전략 목록, 포트폴리오)가 동작하는지
-7. Frontend 페이지가 접속 가능한지
-8. Celery Worker와 Beat가 시작되었는지
+6. 토큰을 사용한 인증 API (전략 목록, 포트폴리오, 긴급정지 상태)가 동작하는지
+7. 전략 생성과 백테스트 작업 상태 전이가 정상인지
+8. Frontend 페이지가 접속 가능한지
+9. Celery Worker와 Beat가 시작되었는지
 
 모든 항목이 `[PASS]`로 나오면 시스템이 정상 동작하는 것입니다.
 
 ### 4.2 수동 테스트 — 웹 화면에서 따라하기
 
-#### Step 1: 회원가입
+#### Step 1: 회원가입 및 로그인
 
 1. 브라우저에서 http://localhost:3000 에 접속합니다.
-2. 회원가입 페이지에서 이메일과 비밀번호를 입력합니다.
-3. 가입 완료 후 로그인합니다.
+2. 로그인 화면 상단 탭에서 **회원가입** 을 선택합니다.
+3. 이메일과 비밀번호를 입력해 계정을 생성하면 자동으로 로그인됩니다.
+4. 2FA를 활성화한 계정이라면 이후 로그인 시 6자리 코드를 함께 입력합니다.
 
-#### Step 2: 전략 생성
+#### Step 2: Settings에서 거래소 연결
+
+1. 좌측 메뉴에서 **설정** 을 클릭합니다.
+2. **거래소 계정 연결** 카드에서 `Binance` 와 `테스트넷 사용`을 선택합니다.
+3. API Key / API Secret을 입력하고 저장합니다.
+4. 필요하면 같은 화면에서 **2FA 설정 시작**으로 Google Authenticator 등의 앱을 연결합니다.
+
+> **참고:** API 키가 없어도 회원가입, 로그인, 전략 CRUD, 백테스트 화면 진입은 가능합니다. 다만 실거래 잔고 조회와 주문 실행은 거래소 연결이 필요합니다.
+>
+> **업비트 KRW 마켓 주의:** 최소 주문 가능 금액은 `5,000 KRW` 이며, 지정가 주문은 업비트 호가 단위 정책에 맞는 가격으로만 제출할 수 있습니다.
+
+#### Step 3: 전략 생성
 
 1. 좌측 메뉴에서 **Strategies** 를 클릭합니다.
 2. "새 전략" 버튼을 클릭합니다.
-3. 전략 이름, 심볼(BTC/USDT), 타임프레임(1h), 조건(예: RSI < 30이면 매수)을 설정합니다.
+3. 전략 이름, 심볼(BTC/KRW), 타임프레임(1h), 조건(예: RSI < 30이면 매수)을 설정합니다.
 4. 저장합니다.
 
-#### Step 3: 백테스트 실행
+#### Step 4: 백테스트 실행
 
 1. 좌측 메뉴에서 **Backtest** 를 클릭합니다.
 2. 방금 만든 전략을 선택합니다.
@@ -406,12 +430,12 @@ bash scripts/test_docker.sh
 
 > **주의:** 캔들 데이터 시딩(3.4단계)을 먼저 해야 백테스트가 동작합니다.
 
-#### Step 4: 대시보드 확인
+#### Step 5: 대시보드 확인
 
 1. 좌측 메뉴에서 **Dashboard** 를 클릭합니다.
-2. BTC/USDT, ETH/USDT 가격이 실시간으로 업데이트되는지 확인합니다.
+2. BTC/KRW, ETH/KRW 가격이 실시간으로 업데이트되는지 확인합니다.
 
-#### Step 5: AI 자문 (선택)
+#### Step 6: AI 자문 (선택)
 
 1. 좌측 메뉴에서 **AI Advisor** 를 클릭합니다.
 2. 자문을 요청하면 AI가 현재 시장 상황에 대한 분석을 제공합니다.
@@ -445,7 +469,22 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 ```
 
 ```bash
-# 4. 전략 목록 조회 (위에서 받은 access_token 값으로 교체)
+# 4. 현재 사용자 조회 (위에서 받은 access_token 값으로 교체)
+curl -H "Authorization: Bearer eyJhbG..." \
+  http://localhost:8000/api/v1/auth/me
+# 기대 결과: {"id":"...", "email":"test@example.com", "has_2fa":false, ...}
+```
+
+```bash
+# 5. 거래소 계정 등록
+curl -X POST http://localhost:8000/api/v1/exchange/accounts \
+  -H "Authorization: Bearer eyJhbG..." \
+  -H "Content-Type: application/json" \
+  -d '{"exchange_id":"upbit","api_key":"...","api_secret":"...","is_testnet":false}'
+```
+
+```bash
+# 6. 전략 목록 조회
 curl -H "Authorization: Bearer eyJhbG..." \
   http://localhost:8000/api/v1/strategies
 # 기대 결과: [] (아직 전략을 안 만들었으므로 빈 배열)
@@ -528,4 +567,4 @@ netstat -ano | findstr :8000
 - [x] Phase 3 — 매매 엔진 + AI 자문
 - [x] Phase 4 — 백테스트 엔진
 - [ ] Phase 5 — 실거래 전환 (테스트넷 → 라이브)
-- [ ] Phase 6 — 업비트 KRW 마켓 지원
+- [x] Phase 6 — 업비트 KRW 마켓 지원

@@ -1,40 +1,46 @@
 import { create } from 'zustand'
-import client from '@/api/client'
+import { authApi, type UserProfile } from '@/api/endpoints/auth'
 
-interface User {
-  id: string
+interface LoginInput {
   email: string
-  is_active: boolean
-  has_2fa: boolean
-  created_at: string
+  password: string
+  totpCode?: string
 }
 
 interface AuthState {
   token: string | null
-  user: User | null
+  user: UserProfile | null
   isAuthenticated: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (input: LoginInput) => Promise<void>
+  register: (email: string, password: string) => Promise<void>
+  fetchMe: () => Promise<UserProfile | null>
   logout: () => void
-  setUser: (user: User | null) => void
+  setUser: (user: UserProfile | null) => void
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+async function loadUserProfile(accessToken: string) {
+  const response = await authApi.getMe(accessToken)
+  return response.data
+}
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   token: localStorage.getItem('token'),
   user: null,
   isAuthenticated: !!localStorage.getItem('token'),
 
-  login: async (email: string, password: string) => {
+  login: async ({ email, password, totpCode }: LoginInput) => {
     try {
-      const response = await client.post('/auth/login', { email, password })
+      const response = await authApi.login({
+        email,
+        password,
+        totp_code: totpCode || undefined,
+      })
       const { access_token } = response.data
       localStorage.setItem('token', access_token)
 
-      let user: User | null = null
+      let user: UserProfile | null = null
       try {
-        const meResponse = await client.get('/auth/me', {
-          headers: { Authorization: `Bearer ${access_token}` },
-        })
-        user = meResponse.data
+        user = await loadUserProfile(access_token)
       } catch (profileError) {
         console.warn('Failed to fetch user profile after login:', profileError)
       }
@@ -50,6 +56,35 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
+  register: async (email: string, password: string) => {
+    try {
+      await authApi.register({ email, password })
+      await get().login({ email, password })
+    } catch (error) {
+      console.error('Registration failed:', error)
+      throw error
+    }
+  },
+
+  fetchMe: async () => {
+    const token = get().token
+    if (!token) {
+      set({
+        user: null,
+        isAuthenticated: false,
+      })
+      return null
+    }
+
+    const user = await loadUserProfile(token)
+    set({
+      token,
+      user,
+      isAuthenticated: true,
+    })
+    return user
+  },
+
   logout: () => {
     localStorage.removeItem('token')
     set({
@@ -60,6 +95,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   setUser: (user) => {
-    set({ user })
+    set({
+      user,
+      isAuthenticated: !!get().token,
+    })
   },
 }))

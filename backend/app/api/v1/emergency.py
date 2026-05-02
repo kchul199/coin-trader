@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +22,14 @@ router = APIRouter(prefix="/emergency", tags=["emergency"])
 
 class EmergencyStopRequest(BaseModel):
     reason: str = "사용자 요청"
+
+
+def _as_text(value: str | bytes | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return value.decode()
+    return value
 
 
 # ------------------------------------------------------------------ #
@@ -56,9 +66,13 @@ async def stop_strategy(
             detail="전략을 찾을 수 없습니다.",
         )
 
+    request_id = str(uuid.uuid4())
+    await redis.setex(f"emergency:request:{strategy_id}", 3600, request_id)
+    await redis.setex(f"emergency:stop:{strategy_id}", 3600, body.reason)
+
     # Celery 비동기 처리
     task = emergency_stop_task.apply_async(
-        args=[strategy_id, str(current_user.id), body.reason],
+        args=[strategy_id, str(current_user.id), body.reason, request_id],
         queue="trading",
         priority=9,  # 최우선 처리
     )
@@ -67,6 +81,7 @@ async def stop_strategy(
         "message": "긴급 정지 요청이 접수되었습니다.",
         "strategy_id": strategy_id,
         "task_id": task.id,
+        "request_id": request_id,
     }
 
 
@@ -138,6 +153,7 @@ async def clear_stop(
         )
 
     await redis.delete(f"emergency:stop:{strategy_id}")
+    await redis.delete(f"emergency:request:{strategy_id}")
     return {"message": "긴급 정지가 해제되었습니다.", "strategy_id": strategy_id}
 
 
@@ -157,7 +173,7 @@ async def get_stop_status(
     strategies = result.fetchall()
 
     global_stop_raw = await redis.get("emergency:stop:global")
-    global_stop = global_stop_raw.decode() if global_stop_raw else None
+    global_stop = _as_text(global_stop_raw)
 
     statuses = []
     for s_id, s_name in strategies:
@@ -166,7 +182,7 @@ async def get_stop_status(
             "strategy_id": str(s_id),
             "strategy_name": s_name,
             "stopped": flag_raw is not None,
-            "reason": flag_raw.decode() if flag_raw else None,
+            "reason": _as_text(flag_raw),
         })
 
     return {

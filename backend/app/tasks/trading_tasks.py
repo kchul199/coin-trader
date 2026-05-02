@@ -3,16 +3,18 @@ Trading Celery Tasks — 전략 평가 사이클
 - evaluate_all_active_strategies: 30초마다 모든 활성 전략 평가
 - evaluate_hold_queue: 5분마다 hold 대기 전략 재평가
 - emergency_stop_task: 긴급 정지 처리
+- watch_symbol_positions: 가격 이벤트 기반 심볼 단위 청산 감시
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
 
 from celery import shared_task
 from sqlalchemy import select
+
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +33,26 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
+def _retry_with_backoff(task, exc: Exception):
+    base_delay = max(1, int(getattr(settings, "CELERY_RETRY_BASE_DELAY_SECONDS", 5)))
+    max_delay = max(base_delay, int(getattr(settings, "CELERY_RETRY_MAX_DELAY_SECONDS", 60)))
+    attempt = int(getattr(task.request, "retries", 0))
+    countdown = min(base_delay * (2 ** attempt), max_delay)
+    logger.warning(
+        "Celery 재시도 예약: task=%s attempt=%d countdown=%ds error=%s",
+        task.name,
+        attempt + 1,
+        countdown,
+        exc,
+    )
+    raise task.retry(exc=exc, countdown=countdown)
+
+
 @shared_task(
     name="tasks.evaluate_strategy",
     bind=True,
-    max_retries=2,
-    default_retry_delay=10,
+    max_retries=settings.CELERY_TASK_MAX_RETRIES,
+    default_retry_delay=settings.CELERY_RETRY_BASE_DELAY_SECONDS,
     soft_time_limit=25,
     time_limit=30,
 )
@@ -69,7 +86,102 @@ def evaluate_strategy_task(self, strategy_id: str):
                 return result
         except Exception as exc:
             logger.error("전략 평가 오류: strategy_id=%s error=%s", strategy_id, exc)
-            raise self.retry(exc=exc)
+            _retry_with_backoff(self, exc)
+        finally:
+            await exchange.close()
+
+    return _run_async(_run())
+
+
+@shared_task(
+    name="tasks.watch_position_exits",
+    bind=True,
+    max_retries=settings.CELERY_TASK_MAX_RETRIES,
+    default_retry_delay=settings.CELERY_RETRY_BASE_DELAY_SECONDS,
+    soft_time_limit=20,
+    time_limit=25,
+)
+def watch_position_exits_task(self):
+    """보유 포지션의 SL/TP/트레일링 스탑을 짧은 주기로 감시한다."""
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.core.redis_client import get_redis
+        from app.exchange.ccxt_adapter import create_exchange_adapter
+        from app.websocket.manager import ws_manager
+        from app.trading.order_watcher import OrderWatcher
+
+        redis = await get_redis()
+        exchange = create_exchange_adapter()
+
+        try:
+            async with AsyncSessionLocal() as db:
+                watcher = OrderWatcher(
+                    db=db,
+                    redis_client=redis,
+                    exchange=exchange,
+                    ws_manager=ws_manager,
+                    settings=settings,
+                )
+                result = await watcher.watch_active_positions()
+                logger.info(
+                    "포지션 감시 완료: watched=%d exited=%d skipped=%d failed=%d",
+                    result["watched"],
+                    result["exited"],
+                    result["skipped"],
+                    result["failed"],
+                )
+                return result
+        except Exception as exc:
+            logger.error("포지션 감시 오류: %s", exc)
+            _retry_with_backoff(self, exc)
+        finally:
+            await exchange.close()
+
+    return _run_async(_run())
+
+
+@shared_task(
+    name="tasks.watch_symbol_positions",
+    bind=True,
+    max_retries=settings.CELERY_TASK_MAX_RETRIES,
+    default_retry_delay=settings.CELERY_RETRY_BASE_DELAY_SECONDS,
+    soft_time_limit=10,
+    time_limit=15,
+)
+def watch_symbol_positions_task(self, symbol: str):
+    """가격 이벤트를 받은 심볼의 포지션만 즉시 감시한다."""
+    async def _run():
+        from app.database import AsyncSessionLocal
+        from app.core.redis_client import get_redis
+        from app.exchange.ccxt_adapter import create_exchange_adapter
+        from app.websocket.manager import ws_manager
+        from app.trading.order_watcher import OrderWatcher
+
+        redis = await get_redis()
+        exchange = create_exchange_adapter()
+
+        try:
+            async with AsyncSessionLocal() as db:
+                watcher = OrderWatcher(
+                    db=db,
+                    redis_client=redis,
+                    exchange=exchange,
+                    ws_manager=ws_manager,
+                    settings=settings,
+                )
+                result = await watcher.watch_symbol_positions(symbol)
+                logger.info(
+                    "심볼 포지션 감시 완료: symbol=%s watched=%d exited=%d skipped=%d failed=%d",
+                    symbol,
+                    result["watched"],
+                    result["exited"],
+                    result["skipped"],
+                    result["failed"],
+                )
+                return result
+        except Exception as exc:
+            logger.error("심볼 포지션 감시 오류: symbol=%s error=%s", symbol, exc)
+            _retry_with_backoff(self, exc)
         finally:
             await exchange.close()
 
@@ -145,7 +257,7 @@ def evaluate_hold_queue():
 
 
 @shared_task(name="tasks.emergency_stop")
-def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
+def emergency_stop_task(strategy_id: str, user_id: str, reason: str, request_id: str | None = None):
     """긴급 정지 처리 태스크"""
     async def _run():
         from app.database import AsyncSessionLocal
@@ -164,6 +276,7 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
 
         lock_key = f"emergency:lock:{strategy_id}"
         flag_key = f"emergency:stop:{strategy_id}"
+        request_key = f"emergency:request:{strategy_id}"
 
         # 분산 락 획득 (원자적 SET NX EX)
         acquired = await redis.set(lock_key, user_id, nx=True, ex=5)
@@ -171,6 +284,13 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
             return {"status": "already_stopping"}
 
         try:
+            if request_id:
+                current_request = await redis.get(request_key)
+                current_request = current_request.decode() if isinstance(current_request, bytes) else current_request
+                if current_request != request_id:
+                    logger.info("긴급 정지 요청이 이미 해제/교체됨: strategy=%s", strategy_id)
+                    return {"status": "cancelled"}
+
             async with AsyncSessionLocal() as db:
                 # DB 전략 비활성화
                 await db.execute(
@@ -180,8 +300,8 @@ def emergency_stop_task(strategy_id: str, user_id: str, reason: str):
                 )
                 await db.commit()
 
-                # Redis 긴급 정지 플래그 (1시간 TTL)
-                await redis.setex(flag_key, 3600, reason)
+                # API 응답 직후 즉시 반영된 플래그의 TTL만 갱신
+                await redis.expire(flag_key, 3600)
 
                 # 미체결 주문 조회
                 result = await db.execute(

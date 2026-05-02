@@ -16,7 +16,7 @@ class ExchangeAccount(Base):
     exchange_id = Column(String(50), nullable=False)
     api_key_encrypted = Column(LargeBinary, nullable=False)
     api_secret_encrypted = Column(LargeBinary, nullable=False)
-    is_testnet = Column(Boolean, default=True, nullable=False)
+    is_testnet = Column(Boolean, default=False, nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(
         DateTime(timezone=True),

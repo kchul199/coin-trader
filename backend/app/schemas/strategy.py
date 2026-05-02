@@ -6,7 +6,7 @@ import uuid
 
 class StrategyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    symbol: str = Field(..., examples=["BTC/USDT"])
+    symbol: str = Field(..., examples=["BTC/KRW"])
     timeframe: str = Field("1h", pattern="^(1m|5m|15m|30m|1h|4h|1d)$")
     condition_tree: dict = Field(..., description="매수 조건 트리 (JSON)")
     order_config: dict = Field(..., description="주문 설정 (JSON)")

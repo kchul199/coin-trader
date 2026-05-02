@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { RefreshCw, Brain } from 'lucide-react'
-import { aiAdvisorApi, AiConsultation, AiStats } from '@/api/endpoints/ai_advisor'
+import { RefreshCw, Brain, Check, X } from 'lucide-react'
+import { aiAdvisorApi, AiConsultation, AiStats, ApprovalRequest } from '@/api/endpoints/ai_advisor'
 import { useStrategyStore } from '@/stores/strategyStore'
+import { getErrorMessage } from '@/utils/error'
 
 const DECISION_COLORS: Record<string, string> = {
   execute: 'text-emerald-400 bg-emerald-900/30 border-emerald-800',
@@ -24,6 +25,75 @@ const RISK_LABELS: Record<string, string> = {
   high: '높음',
 }
 const CONSULTATION_LIMIT = 10
+
+function ApprovalCard({
+  approval,
+  loadingAction,
+  onApprove,
+  onReject,
+}: {
+  approval: ApprovalRequest
+  loadingAction: string | null
+  onApprove: (strategyId: string) => void
+  onReject: (strategyId: string) => void
+}) {
+  const riskColor = RISK_COLORS[approval.risk_level] || 'text-gray-400'
+  const createdAt = approval.created_at ? new Date(approval.created_at).toLocaleString('ko-KR') : '-'
+  const isApproving = loadingAction === `approve:${approval.strategy_id}`
+  const isRejecting = loadingAction === `reject:${approval.strategy_id}`
+
+  return (
+    <div className="bg-gray-800 border border-amber-800 rounded-lg p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-white">{approval.strategy_name}</p>
+          <p className="text-xs text-gray-400">{approval.symbol} · 생성 {createdAt}</p>
+        </div>
+        <DecisionBadge decision={approval.decision} />
+      </div>
+
+      <p className="text-sm text-gray-300 leading-relaxed">{approval.reason}</p>
+
+      <div className="flex flex-wrap gap-2 text-xs">
+        <span className="text-gray-400">
+          신뢰도 <span className="text-white font-semibold">{approval.confidence}%</span>
+        </span>
+        <span className={`font-medium ${riskColor}`}>
+          리스크: {RISK_LABELS[approval.risk_level] || approval.risk_level}
+        </span>
+      </div>
+
+      {approval.key_concerns.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {approval.key_concerns.map((concern, index) => (
+            <span key={index} className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded">
+              {concern}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => onApprove(approval.strategy_id)}
+          disabled={isApproving || isRejecting}
+          className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+        >
+          <Check size={14} />
+          {isApproving ? '승인 중...' : '실행 승인'}
+        </button>
+        <button
+          onClick={() => onReject(approval.strategy_id)}
+          disabled={isApproving || isRejecting}
+          className="inline-flex items-center gap-1 rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
+        >
+          <X size={14} />
+          {isRejecting ? '거절 중...' : '거절'}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 function DecisionBadge({ decision }: { decision: string }) {
   const color = DECISION_COLORS[decision] || 'text-gray-400 bg-gray-700 border-gray-700'
@@ -119,6 +189,7 @@ export default function AiAdvisor() {
   const strategies = useStrategyStore((s) => s.strategies)
   const fetchStrategies = useStrategyStore((s) => s.fetchStrategies)
   const [consultations, setConsultations] = useState<AiConsultation[]>([])
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([])
   const [stats, setStats] = useState<AiStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectedStrategy, setSelectedStrategy] = useState<string>('')
@@ -126,6 +197,8 @@ export default function AiAdvisor() {
   const [total, setTotal] = useState(0)
   const [offset, setOffset] = useState(0)
   const [refreshing, setRefreshing] = useState<string | null>(null)
+  const [approvalAction, setApprovalAction] = useState<string | null>(null)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     void fetchStrategies()
@@ -133,8 +206,9 @@ export default function AiAdvisor() {
 
   const loadData = useCallback(async () => {
     setLoading(true)
+    setError('')
     try {
-      const [consultRes, statsRes] = await Promise.all([
+      const [consultRes, statsRes, approvalRes] = await Promise.all([
         aiAdvisorApi.listConsultations({
           strategy_id: selectedStrategy || undefined,
           decision: decisionFilter || undefined,
@@ -142,12 +216,14 @@ export default function AiAdvisor() {
           offset,
         }),
         aiAdvisorApi.getStats(selectedStrategy || undefined),
+        aiAdvisorApi.listApprovals('pending'),
       ])
       setConsultations(consultRes.data.items)
       setTotal(consultRes.data.total)
       setStats(statsRes.data)
+      setApprovals(approvalRes.data.items)
     } catch (e) {
-      console.error(e)
+      setError(getErrorMessage(e, 'AI 자문 데이터를 불러오지 못했습니다.'))
     } finally {
       setLoading(false)
     }
@@ -168,6 +244,30 @@ export default function AiAdvisor() {
       console.error(e)
     } finally {
       setRefreshing(null)
+    }
+  }
+
+  const handleApprove = async (strategyId: string) => {
+    setApprovalAction(`approve:${strategyId}`)
+    try {
+      await aiAdvisorApi.approve(strategyId)
+      await loadData()
+    } catch (e) {
+      setError(getErrorMessage(e, '승인 처리에 실패했습니다.'))
+    } finally {
+      setApprovalAction(null)
+    }
+  }
+
+  const handleReject = async (strategyId: string) => {
+    setApprovalAction(`reject:${strategyId}`)
+    try {
+      await aiAdvisorApi.reject(strategyId)
+      await loadData()
+    } catch (e) {
+      setError(getErrorMessage(e, '거절 처리에 실패했습니다.'))
+    } finally {
+      setApprovalAction(null)
     }
   }
 
@@ -192,6 +292,12 @@ export default function AiAdvisor() {
         </button>
       </div>
 
+      {error && (
+        <div className="rounded-lg border border-red-700 bg-red-900/40 px-4 py-3 text-sm text-red-100">
+          {error}
+        </div>
+      )}
+
       {/* AI 모드 활성 전략 */}
       {aiStrategies.length > 0 && (
         <section>
@@ -213,6 +319,26 @@ export default function AiAdvisor() {
                   갱신
                 </button>
               </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {approvals.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-gray-400">반자동 승인 대기</h2>
+            <span className="text-xs text-amber-400">{approvals.length}건</span>
+          </div>
+          <div className="space-y-3">
+            {approvals.map((approval) => (
+              <ApprovalCard
+                key={approval.strategy_id}
+                approval={approval}
+                loadingAction={approvalAction}
+                onApprove={handleApprove}
+                onReject={handleReject}
+              />
             ))}
           </div>
         </section>

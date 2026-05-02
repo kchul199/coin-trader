@@ -149,6 +149,19 @@ export function useWebSocket() {
           })
           break
         }
+
+        case 'system_notice': {
+          const title = getStringField(msg, 'title')
+          const message = getStringField(msg, 'message')
+          const level = getStringField(msg, 'level')
+          if (!title || !message) break
+          addNotification({
+            type: level === 'error' ? 'error' : 'info',
+            title,
+            message,
+          })
+          break
+        }
       }
     }
 

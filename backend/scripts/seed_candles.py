@@ -1,13 +1,13 @@
 """
 캔들 데이터 시딩 스크립트
-- Binance 공개 API에서 과거 OHLCV 데이터를 가져와 PostgreSQL에 저장
+- 설정된 거래소의 공개 API에서 과거 OHLCV 데이터를 가져와 PostgreSQL에 저장
 - Docker 환경 내에서 실행:
     docker compose exec backend python -m scripts.seed_candles
   또는 로컬에서:
     cd backend && python -m scripts.seed_candles
 
 옵션:
-  --symbols BTC/USDT,ETH/USDT   대상 심볼 (기본: BTC/USDT, ETH/USDT)
+  --symbols BTC/KRW,ETH/KRW     대상 심볼 (기본: BTC/KRW, ETH/KRW)
   --timeframes 1h,4h,1d          대상 타임프레임 (기본: 1h, 4h, 1d)
   --days 90                       조회할 과거 일수 (기본: 90)
 """
@@ -32,12 +32,12 @@ async def seed_candles(symbols: list[str], timeframes: list[str], days: int):
     # DB 테이블 생성 보장
     await init_db()
 
-    exchange = ccxt.binance({"enableRateLimit": True})
-
-    # Binance 공개 API는 테스트넷이 아니라 실제 마켓 데이터 사용
-    # (가격 데이터는 공개이므로 API 키 불필요)
+    exchange_class = getattr(ccxt, settings.EXCHANGE_ID)
+    exchange = exchange_class({"enableRateLimit": True})
 
     since = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp() * 1000)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    batch_limit = 200 if settings.EXCHANGE_ID == "upbit" else 1000
     total_saved = 0
 
     try:
@@ -52,7 +52,7 @@ async def seed_candles(symbols: list[str], timeframes: list[str], days: int):
                 while True:
                     try:
                         batch = await exchange.fetch_ohlcv(
-                            symbol, timeframe, since=fetch_since, limit=1000
+                            symbol, timeframe, since=fetch_since, limit=batch_limit
                         )
                     except Exception as e:
                         print(f"    Warning: {e}", flush=True)
@@ -65,7 +65,7 @@ async def seed_candles(symbols: list[str], timeframes: list[str], days: int):
                     last_ts = batch[-1][0]
 
                     # 마지막 캔들 타임스탬프가 현재와 같으면 종료
-                    if len(batch) < 1000:
+                    if len(batch) < batch_limit or last_ts >= now_ms:
                         break
                     fetch_since = last_ts + 1
 
@@ -113,12 +113,12 @@ async def seed_candles(symbols: list[str], timeframes: list[str], days: int):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Seed candle data from Binance")
+    parser = argparse.ArgumentParser(description="Seed candle data from the configured exchange")
     parser.add_argument(
         "--symbols",
         type=str,
-        default="BTC/USDT,ETH/USDT",
-        help="Comma-separated trading pairs (default: BTC/USDT,ETH/USDT)",
+        default="BTC/KRW,ETH/KRW",
+        help="Comma-separated trading pairs (default: BTC/KRW,ETH/KRW)",
     )
     parser.add_argument(
         "--timeframes",

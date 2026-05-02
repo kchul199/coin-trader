@@ -13,6 +13,7 @@ from app.models.candle import Candle
 from app.models.exchange_account import ExchangeAccount
 from app.core.encryption import decrypt_api_key
 from app.exchange.ccxt_adapter import CcxtAdapter
+from app.exchange.symbols import normalize_symbol, to_compact_symbol
 from app.config import settings
 
 router = APIRouter(prefix="/chart", tags=["chart"])
@@ -47,11 +48,7 @@ async def get_candles(
     db: AsyncSession = Depends(get_db),
 ):
     """캔들 데이터 조회 - DB에 없으면 거래소 API 호출"""
-    # symbol 정규화: BTCUSDT → BTC/USDT
-    norm_symbol = symbol.upper().replace("-", "/")
-    if "/" not in norm_symbol and len(norm_symbol) > 4:
-        # BTCUSDT → BTC/USDT 추정
-        norm_symbol = norm_symbol[:-4] + "/" + norm_symbol[-4:]
+    norm_symbol = normalize_symbol(symbol, settings.QUOTE_CURRENCY)
 
     # 활성 거래소 계정 조회
     acc_result = await db.execute(
@@ -66,14 +63,16 @@ async def get_candles(
         # 계정 없으면 퍼블릭 API로 조회 (API키 불필요)
         api_key, api_secret = "", ""
         is_testnet = settings.USE_TESTNET
+        exchange_id = settings.EXCHANGE_ID
     else:
         api_key = decrypt_api_key(account.api_key_encrypted)
         api_secret = decrypt_api_key(account.api_secret_encrypted)
         is_testnet = account.is_testnet
+        exchange_id = account.exchange_id
 
     try:
         adapter = CcxtAdapter(
-            exchange_id=settings.EXCHANGE_ID,
+            exchange_id=exchange_id,
             api_key=api_key,
             api_secret=api_secret,
             testnet=is_testnet,
@@ -105,13 +104,11 @@ async def get_ticker(
     """현재가 조회 - Redis 캐시 우선"""
     from app.core.redis_client import get_redis
 
-    norm_symbol = symbol.upper().replace("-", "/")
-    if "/" not in norm_symbol and len(norm_symbol) > 4:
-        norm_symbol = norm_symbol[:-4] + "/" + norm_symbol[-4:]
+    norm_symbol = normalize_symbol(symbol, settings.QUOTE_CURRENCY)
 
     # Redis 캐시 확인
     redis = await get_redis()
-    cache_key = f"price:{settings.EXCHANGE_ID}:{norm_symbol.replace('/', '')}"
+    cache_key = f"price:{settings.EXCHANGE_ID}:{to_compact_symbol(norm_symbol, settings.QUOTE_CURRENCY)}"
     cached = await redis.get(cache_key)
 
     if cached:

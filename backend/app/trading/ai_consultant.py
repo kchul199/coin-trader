@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 VALID_DECISIONS = {"execute", "hold", "avoid"}
 VALID_RISK_LEVELS = {"low", "medium", "high"}
 CACHE_TTL = 300  # 5분
+APPROVAL_TTL_SECONDS = 1800  # 30분
+APPROVAL_STATUS_TTL_SECONDS = 600  # 승인/거절 상태 소비 대기
+APPROVAL_KEY_PREFIX = "ai:approval:"
 
 PROMPT_VERSION = 2
 
@@ -152,6 +155,58 @@ class AIConsultant:
         return result
 
     # ------------------------------------------------------------------ #
+    # semi_auto 승인 큐
+    # ------------------------------------------------------------------ #
+
+    async def get_approval_request(self, strategy_id: str) -> Optional[dict]:
+        raw = await self.redis.get(f"{APPROVAL_KEY_PREFIX}{strategy_id}")
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+
+    async def create_approval_request(self, strategy: dict, advice: dict) -> dict:
+        payload = {
+            "strategy_id": str(strategy["id"]),
+            "user_id": str(strategy["user_id"]),
+            "strategy_name": strategy.get("name"),
+            "symbol": strategy.get("symbol"),
+            "decision": advice.get("decision"),
+            "confidence": advice.get("confidence"),
+            "reason": advice.get("reason"),
+            "risk_level": advice.get("risk_level"),
+            "key_concerns": advice.get("key_concerns") or [],
+            "status": "pending",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        await self.redis.setex(
+            f"{APPROVAL_KEY_PREFIX}{strategy['id']}",
+            APPROVAL_TTL_SECONDS,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        return payload
+
+    async def update_approval_status(self, strategy_id: str, status: str) -> Optional[dict]:
+        payload = await self.get_approval_request(strategy_id)
+        if not payload:
+            return None
+
+        payload["status"] = status
+        payload["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        ttl = APPROVAL_STATUS_TTL_SECONDS if status in {"approved", "rejected"} else APPROVAL_TTL_SECONDS
+        await self.redis.setex(
+            f"{APPROVAL_KEY_PREFIX}{strategy_id}",
+            ttl,
+            json.dumps(payload, ensure_ascii=False),
+        )
+        return payload
+
+    async def clear_approval_request(self, strategy_id: str) -> None:
+        await self.redis.delete(f"{APPROVAL_KEY_PREFIX}{strategy_id}")
+
+    # ------------------------------------------------------------------ #
     # 내부 유틸리티
     # ------------------------------------------------------------------ #
 
@@ -206,7 +261,7 @@ class AIConsultant:
 
 ## 분석 대상
 - 심볼: {ctx.get('symbol', 'UNKNOWN')}
-- 현재가: {ctx.get('price', 'N/A')} {ctx.get('quote_currency', 'USDT')}
+- 현재가: {ctx.get('price', 'N/A')} {ctx.get('quote_currency', getattr(self.settings, 'QUOTE_CURRENCY', 'KRW'))}
 - 24시간 변동률: {ctx.get('change_24h', 'N/A')}%
 - 거래량 (24h): {ctx.get('volume_24h', 'N/A')}
 

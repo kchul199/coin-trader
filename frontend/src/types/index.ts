@@ -70,6 +70,8 @@ export interface OrderConfig {
   take_profit_pct?: number;
   stop_loss_pct?: number;
   trailing_stop?: boolean;
+  trailing_stop_pct?: number;
+  split_count?: number;
 }
 
 export interface PriceUpdate {
@@ -94,4 +96,39 @@ export interface ExchangeAccount {
   is_testnet: boolean;
   is_active: boolean;
   created_at: string;
+}
+
+export interface TickerSnapshot {
+  symbol: string;
+  price: number;
+  change_24h: number;
+  volume_24h: number;
+  bid: number;
+  ask: number;
+}
+
+export interface OrderRecord {
+  id: string;
+  exchange_id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  order_type: string;
+  price: number | null;
+  quantity: number;
+  filled_quantity: number;
+  avg_fill_price: number | null;
+  status: string;
+  created_at: string;
+  filled_at: string | null;
+  updated_at: string;
+}
+
+export interface PortfolioPosition {
+  id: string;
+  symbol: string;
+  exchange_id: string;
+  quantity: number;
+  avg_buy_price: number | null;
+  initial_capital: number | null;
+  last_updated: string;
 }

@@ -4,6 +4,7 @@ import { TrendingUp, TrendingDown, Zap } from 'lucide-react'
 import { usePriceStore } from '@/stores/priceStore'
 import { useStrategyStore } from '@/stores/strategyStore'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { DEFAULT_DASHBOARD_SYMBOLS, formatQuoteCurrency, normalizeMarketSymbol } from '@/utils/market'
 
 interface PriceCardProps {
   symbol: string
@@ -23,7 +24,7 @@ function PriceCard({ symbol, price, change }: PriceCardProps) {
         </span>
       </div>
       <div className="text-xl font-bold text-white">
-        ${price > 0 ? price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '--'}
+        {price > 0 ? formatQuoteCurrency(price) : '--'}
       </div>
     </div>
   )
@@ -57,9 +58,9 @@ export default function Dashboard() {
       <section>
         <h2 className="text-sm font-medium text-gray-400 mb-3">실시간 시세</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {['BTCUSDT', 'ETHUSDT'].map((sym) => (
+          {DEFAULT_DASHBOARD_SYMBOLS.map((sym) => (
             <Link key={sym} to={`/chart/${sym}`}>
-              <PriceCard symbol={sym} price={prices[sym] || 0} change={changes[sym] || 0} />
+              <PriceCard symbol={normalizeMarketSymbol(sym)} price={prices[sym] || 0} change={changes[sym] || 0} />
             </Link>
           ))}
         </div>
