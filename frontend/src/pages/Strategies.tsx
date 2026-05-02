@@ -4,6 +4,7 @@ import { useStrategyStore } from '@/stores/strategyStore'
 import { StrategyCard } from '@/components/strategy/StrategyCard'
 import { ConditionBuilder } from '@/components/strategy/ConditionBuilder'
 import { Strategy, ConditionNode, OrderConfig, SerializedConditionNode, StrategyUpsertPayload } from '@/types'
+import { DEFAULT_STRATEGY_SYMBOL } from '@/utils/market'
 
 function createDefaultCondition(): ConditionNode {
   return {
@@ -22,7 +23,91 @@ function createDefaultOrder(): OrderConfig {
     quantity_value: 10,
     take_profit_pct: 4,
     stop_loss_pct: 2,
+    trailing_stop: false,
+    trailing_stop_pct: 1.5,
+    split_count: 1,
   }
+}
+
+interface StrategyTemplate {
+  id: string
+  name: string
+  description: string
+  symbol: string
+  timeframe: string
+  aiMode: Strategy['ai_mode']
+  priority: number
+  conditionTree: ConditionNode
+  orderConfig: OrderConfig
+}
+
+const STRATEGY_TEMPLATES: StrategyTemplate[] = [
+  {
+    id: 'rsi-rebound',
+    name: 'RSI 반등',
+    description: '과매도 구간 진입 시 분할 매수용 기본 템플릿',
+    symbol: DEFAULT_STRATEGY_SYMBOL,
+    timeframe: '1h',
+    aiMode: 'observe',
+    priority: 5,
+    conditionTree: {
+      operator: 'AND',
+      conditions: [
+        { indicator: 'RSI', params: { timeframe: '1h', period: 14 }, compareOperator: 'lt', value: 30 },
+        { indicator: 'PRICE', params: { timeframe: '1h', period: 20 }, compareOperator: 'crosses_above_ma' },
+      ],
+    },
+    orderConfig: createDefaultOrder(),
+  },
+  {
+    id: 'breakout',
+    name: '가격 돌파',
+    description: '20EMA 상향 돌파와 거래량 급증을 함께 보는 추세 템플릿',
+    symbol: DEFAULT_STRATEGY_SYMBOL,
+    timeframe: '1h',
+    aiMode: 'observe',
+    priority: 6,
+    conditionTree: {
+      operator: 'AND',
+      conditions: [
+        { indicator: 'PRICE', params: { timeframe: '1h', period: 20 }, compareOperator: 'crosses_above_ema' },
+        { indicator: 'VOLUME', params: { timeframe: '1h' }, compareOperator: 'gt_multiple', value: 1.8 },
+      ],
+    },
+    orderConfig: {
+      ...createDefaultOrder(),
+      take_profit_pct: 6,
+      stop_loss_pct: 2.5,
+      trailing_stop: true,
+      trailing_stop_pct: 1.8,
+      split_count: 2,
+    },
+  },
+  {
+    id: 'mean-reversion',
+    name: '평균 회귀',
+    description: '볼린저 하단 이탈과 RSI 확인을 묶은 눌림목 템플릿',
+    symbol: DEFAULT_STRATEGY_SYMBOL,
+    timeframe: '4h',
+    aiMode: 'off',
+    priority: 4,
+    conditionTree: {
+      operator: 'AND',
+      conditions: [
+        { indicator: 'BB', params: { timeframe: '4h', period: 20, std: 2 }, compareOperator: 'price_below_lower' },
+        { indicator: 'RSI', params: { timeframe: '4h', period: 14 }, compareOperator: 'lt', value: 35 },
+      ],
+    },
+    orderConfig: { ...createDefaultOrder(), quantity_value: 15 },
+  },
+]
+
+function cloneTemplateCondition(tree: ConditionNode) {
+  return JSON.parse(JSON.stringify(tree)) as ConditionNode
+}
+
+function cloneTemplateOrder(order: OrderConfig) {
+  return JSON.parse(JSON.stringify(order)) as OrderConfig
 }
 
 function isGroupNode(node: ConditionNode | SerializedConditionNode | null | undefined) {
@@ -87,7 +172,7 @@ export default function Strategies() {
 
   // Form state
   const [name, setName] = useState('')
-  const [symbol, setSymbol] = useState('BTC/USDT')
+  const [symbol, setSymbol] = useState(DEFAULT_STRATEGY_SYMBOL)
   const [timeframe, setTimeframe] = useState('1h')
   const [aiMode, setAiMode] = useState<Strategy['ai_mode']>('off')
   const [priority, setPriority] = useState(5)
@@ -102,12 +187,24 @@ export default function Strategies() {
   const openCreate = () => {
     setEditing(null)
     setName('')
-    setSymbol('BTC/USDT')
+    setSymbol(DEFAULT_STRATEGY_SYMBOL)
     setTimeframe('1h')
     setAiMode('off')
     setPriority(5)
     setConditionTree(createDefaultCondition())
     setOrderConfig(createDefaultOrder())
+    setShowModal(true)
+  }
+
+  const applyTemplate = (template: StrategyTemplate) => {
+    setEditing(null)
+    setName(template.name)
+    setSymbol(template.symbol)
+    setTimeframe(template.timeframe)
+    setAiMode(template.aiMode)
+    setPriority(template.priority)
+    setConditionTree(cloneTemplateCondition(template.conditionTree))
+    setOrderConfig(cloneTemplateOrder(template.orderConfig))
     setShowModal(true)
   }
 
@@ -147,6 +244,16 @@ export default function Strategies() {
     }
   }
 
+  const setOptionalOrderNumber = (
+    field: 'take_profit_pct' | 'stop_loss_pct' | 'trailing_stop_pct',
+    rawValue: string
+  ) => {
+    setOrderConfig((prev) => ({
+      ...prev,
+      [field]: rawValue === '' ? undefined : Number(rawValue),
+    }))
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -160,6 +267,21 @@ export default function Strategies() {
           </button>
         </div>
       </div>
+
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        {STRATEGY_TEMPLATES.map((template) => (
+          <button
+            key={template.id}
+            type="button"
+            onClick={() => applyTemplate(template)}
+            className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 text-left transition hover:border-blue-700 hover:bg-slate-900"
+          >
+            <p className="text-sm font-semibold text-slate-100">{template.name}</p>
+            <p className="mt-1 text-xs text-slate-400">{template.description}</p>
+            <p className="mt-3 text-xs text-sky-300">{template.symbol} · {template.timeframe} · AI {template.aiMode}</p>
+          </button>
+        ))}
+      </section>
 
       {loading ? (
         <div className="flex items-center justify-center h-48 text-gray-400">
@@ -190,6 +312,24 @@ export default function Strategies() {
               <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white text-xl">✕</button>
             </div>
             <div className="p-5 space-y-4">
+              {!editing && (
+                <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                  <p className="text-xs font-medium text-slate-300">빠른 시작 템플릿</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {STRATEGY_TEMPLATES.map((template) => (
+                      <button
+                        key={template.id}
+                        type="button"
+                        onClick={() => applyTemplate(template)}
+                        className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300 hover:border-blue-600 hover:text-white"
+                      >
+                        {template.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-400 mb-1">전략 이름</label>
@@ -206,7 +346,7 @@ export default function Strategies() {
                     className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-white text-sm"
                     value={symbol}
                     onChange={(e) => setSymbol(e.target.value)}
-                    placeholder="BTC/USDT"
+                    placeholder={DEFAULT_STRATEGY_SYMBOL}
                   />
                 </div>
                 <div>
@@ -242,11 +382,49 @@ export default function Strategies() {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">익절 (%)</label>
-                  <input type="number" step="0.1" className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm" value={orderConfig.take_profit_pct || ''} onChange={(e) => setOrderConfig({ ...orderConfig, take_profit_pct: parseFloat(e.target.value) })} />
+                  <input type="number" step="0.1" className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm" value={orderConfig.take_profit_pct || ''} onChange={(e) => setOptionalOrderNumber('take_profit_pct', e.target.value)} />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">손절 (%)</label>
-                  <input type="number" step="0.1" className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm" value={orderConfig.stop_loss_pct || ''} onChange={(e) => setOrderConfig({ ...orderConfig, stop_loss_pct: parseFloat(e.target.value) })} />
+                  <input type="number" step="0.1" className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm" value={orderConfig.stop_loss_pct || ''} onChange={(e) => setOptionalOrderNumber('stop_loss_pct', e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">분할 주문 수</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="5"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm"
+                    value={orderConfig.split_count || 1}
+                    onChange={(e) => setOrderConfig({ ...orderConfig, split_count: Math.max(1, parseInt(e.target.value || '1', 10)) })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs text-gray-400">트레일링 스탑</label>
+                  <label className="flex items-center gap-2 text-sm text-gray-300">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(orderConfig.trailing_stop)}
+                      onChange={(e) =>
+                        setOrderConfig({
+                          ...orderConfig,
+                          trailing_stop: e.target.checked,
+                          trailing_stop_pct: orderConfig.trailing_stop_pct || 1.5,
+                        })
+                      }
+                    />
+                    활성화
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    min="0.1"
+                    disabled={!orderConfig.trailing_stop}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-white text-sm disabled:opacity-50"
+                    value={orderConfig.trailing_stop_pct || ''}
+                    onChange={(e) => setOptionalOrderNumber('trailing_stop_pct', e.target.value)}
+                    placeholder="예: 1.5"
+                  />
                 </div>
               </div>
             </div>

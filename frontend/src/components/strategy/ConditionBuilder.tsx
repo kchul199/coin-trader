@@ -1,7 +1,7 @@
 import { ConditionNode, ConditionParamValue } from '@/types'
 import { Plus, Trash2 } from 'lucide-react'
 
-const INDICATORS = ['RSI', 'MACD', 'BB', 'MA', 'EMA', 'STOCH', 'CCI', 'VOLUME']
+const INDICATORS = ['PRICE', 'RSI', 'MACD', 'BB', 'MA', 'EMA', 'STOCH', 'CCI', 'VOLUME']
 const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d']
 const OPERATORS_NUMERIC = [
   { value: 'lt', label: '<' },
@@ -10,6 +10,16 @@ const OPERATORS_NUMERIC = [
   { value: 'gte', label: '>=' },
 ]
 const OPERATORS_SPECIAL: Record<string, Array<{ value: string; label: string }>> = {
+  PRICE: [
+    { value: 'lt', label: '가격 <' },
+    { value: 'lte', label: '가격 <=' },
+    { value: 'gt', label: '가격 >' },
+    { value: 'gte', label: '가격 >=' },
+    { value: 'crosses_above_ma', label: '이평 상향 돌파' },
+    { value: 'crosses_below_ma', label: '이평 하향 돌파' },
+    { value: 'crosses_above_ema', label: 'EMA 상향 돌파' },
+    { value: 'crosses_below_ema', label: 'EMA 하향 돌파' },
+  ],
   MACD: [
     { value: 'golden_cross', label: '골든크로스' },
     { value: 'dead_cross', label: '데드크로스' },
@@ -39,6 +49,14 @@ function getDefaultCompareTo(indicator?: string, compareOperator?: string) {
     return 'volume_ma_20'
   }
   return undefined
+}
+
+function shouldShowPeriodInput(indicator?: string, compareOperator?: string) {
+  if (indicator === 'PRICE' && compareOperator?.startsWith('crosses_')) {
+    return true
+  }
+
+  return indicator === 'RSI' || indicator === 'MA' || indicator === 'EMA' || indicator === 'STOCH' || indicator === 'CCI'
 }
 
 function getStringParam(value: ConditionParamValue, fallback: string) {
@@ -79,10 +97,10 @@ function LeafEditor({ node, onChange, onDelete }: LeafEditorProps) {
         {TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}
       </select>
 
-      {(indicator === 'RSI' || indicator === 'MA' || indicator === 'EMA' || indicator === 'STOCH' || indicator === 'CCI') && (
+      {shouldShowPeriodInput(indicator, node.compareOperator) && (
         <input
           type="number"
-          placeholder="기간"
+          placeholder={indicator === 'PRICE' ? '이평 기간' : '기간'}
           className="bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-700 w-16"
           value={getNumberParam(node.params?.period)}
           onChange={(e) => onChange({ ...node, params: { ...node.params, period: parseInt(e.target.value) } })}
@@ -113,7 +131,7 @@ function LeafEditor({ node, onChange, onDelete }: LeafEditorProps) {
         <input
           type="number"
           step="any"
-          placeholder="값"
+          placeholder={indicator === 'PRICE' ? '가격' : '값'}
           className="bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-700 w-20"
           value={node.value ?? ''}
           onChange={(e) => onChange({ ...node, value: parseFloat(e.target.value) })}

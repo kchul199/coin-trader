@@ -17,11 +17,12 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotificationStore } from '@/stores/notificationStore'
+import { DEFAULT_CHART_SYMBOLS } from '@/utils/market'
 import EmergencyStopButton from './EmergencyStopButton'
 
 const navItems = [
   { path: '/', label: '대시보드', icon: Home },
-  { path: '/chart/BTCUSDT', label: '차트', icon: TrendingUp },
+  { path: `/chart/${DEFAULT_CHART_SYMBOLS[0]}`, label: '차트', icon: TrendingUp },
   { path: '/strategies', label: '전략', icon: Zap },
   { path: '/ai-advisor', label: 'AI 자문', icon: Brain },
   { path: '/orders', label: '주문', icon: ShoppingCart },

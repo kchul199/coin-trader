@@ -41,7 +41,7 @@ docker compose logs -f backend
 
 ## 3단계: 캔들 데이터 시딩 (백테스트용)
 
-최초 1회 실행하면 BTC/USDT, ETH/USDT의 90일치 OHLCV 데이터가 DB에 저장됩니다.
+최초 1회 실행하면 BTC/KRW, ETH/KRW의 90일치 OHLCV 데이터가 DB에 저장됩니다.
 
 ```bash
 docker compose exec backend python -m scripts.seed_candles
@@ -51,7 +51,7 @@ docker compose exec backend python -m scripts.seed_candles
 ```bash
 # 특정 심볼/타임프레임/기간
 docker compose exec backend python -m scripts.seed_candles \
-  --symbols "BTC/USDT,ETH/USDT" \
+  --symbols "BTC/KRW,ETH/KRW" \
   --timeframes "1h,4h,1d" \
   --days 180
 ```
@@ -77,17 +77,21 @@ bash scripts/test_docker.sh
 ```
 
 PostgreSQL 연결, 테이블 생성, Redis, Backend API (회원가입/로그인), Frontend 접속, Celery 상태를 한번에 점검합니다.
+추가로 전략 생성, 긴급정지 상태 조회, 백테스트 작업 상태 전이까지 확인합니다.
 
 ## 5단계: 최초 테스트 흐름
 
-1. http://localhost:3000 접속 → 회원가입
+1. http://localhost:3000 접속 → 로그인 화면 상단의 `회원가입` 탭에서 계정 생성
 2. Settings → Binance testnet API 키 등록
-3. Strategies → 전략 생성 (RSI < 30 매수 등)
-4. Dashboard → 실시간 가격 확인
-5. Backtest → 전략 선택 → 기간 설정 → 실행
-6. AI Advisor → 자문 조회
+3. Settings → 필요하면 2FA 활성화 후 다시 로그인 테스트
+4. Strategies → 전략 생성 (RSI < 30 매수 등)
+5. Dashboard → 실시간 가격 확인
+6. Backtest → 전략 선택 → 기간 설정 → 실행
+7. AI Advisor → 자문 조회
 
-> **참고:** Binance API 키/Anthropic API 키 없이도 회원가입, 로그인, 전략 CRUD, UI 탐색은 정상 동작합니다. 거래 실행과 AI 어드바이저만 해당 키가 필요합니다.
+> **참고 1:** Binance API 키/Anthropic API 키 없이도 회원가입, 로그인, 전략 CRUD, UI 탐색은 정상 동작합니다. 거래 실행과 AI 어드바이저만 해당 키가 필요합니다.
+>
+> **참고 2:** Backtest를 실행하려면 3단계의 캔들 데이터 시딩을 먼저 해야 합니다. 데이터가 없으면 작업 상태는 `failed`로 바뀌고 원인 메시지가 반환됩니다.
 
 ## DB 초기화 (스키마 변경 시)
 

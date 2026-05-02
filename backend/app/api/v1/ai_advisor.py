@@ -8,6 +8,8 @@ AI 자문 API
 """
 from __future__ import annotations
 
+import json
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy import select, func, desc
@@ -18,6 +20,7 @@ from app.core.redis_client import get_redis
 from app.models.user import User
 from app.models.ai_consultation import AIConsultation as AiConsultation
 from app.models.strategy import Strategy
+from app.trading.ai_consultant import AIConsultant, APPROVAL_KEY_PREFIX
 
 router = APIRouter(prefix="/ai-advisor", tags=["ai-advisor"])
 
@@ -224,4 +227,155 @@ async def get_ai_stats(
         "risk_distribution": {
             r: risks.count(r) for r in ("low", "medium", "high")
         },
+    }
+
+
+@router.get("/approvals", summary="반자동 승인 대기 목록")
+async def list_approvals(
+    status_filter: str = Query("pending", alias="status"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+):
+    """반자동(semi_auto) 전략의 승인 대기/승인/거절 요청 목록을 반환한다."""
+    strat_result = await db.execute(
+        select(Strategy.id, Strategy.name, Strategy.symbol).where(
+            Strategy.user_id == current_user.id,
+            Strategy.ai_mode == "semi_auto",
+        )
+    )
+    owned = {
+        str(row[0]): {"name": row[1], "symbol": row[2]}
+        for row in strat_result.fetchall()
+    }
+
+    if not owned:
+        return {"items": [], "total": 0}
+
+    items = []
+    async for key in redis.scan_iter(f"{APPROVAL_KEY_PREFIX}*"):
+        raw = await redis.get(key)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+
+        strategy_id = str(payload.get("strategy_id"))
+        if strategy_id not in owned:
+            continue
+        if status_filter and payload.get("status") != status_filter:
+            continue
+
+        items.append({
+            "strategy_id": strategy_id,
+            "strategy_name": payload.get("strategy_name") or owned[strategy_id]["name"],
+            "symbol": payload.get("symbol") or owned[strategy_id]["symbol"],
+            "decision": payload.get("decision"),
+            "confidence": payload.get("confidence"),
+            "reason": payload.get("reason"),
+            "risk_level": payload.get("risk_level"),
+            "key_concerns": payload.get("key_concerns") or [],
+            "status": payload.get("status"),
+            "created_at": payload.get("created_at"),
+            "updated_at": payload.get("updated_at"),
+        })
+
+    items.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return {"items": items, "total": len(items)}
+
+
+async def _update_consultation_approval(
+    db: AsyncSession,
+    strategy_id: str,
+    approved: bool,
+) -> None:
+    strategy_uuid = uuid.UUID(strategy_id)
+    result = await db.execute(
+        select(AiConsultation)
+        .where(
+            AiConsultation.strategy_id == strategy_uuid,
+            AiConsultation.user_approved.is_(None),
+        )
+        .order_by(desc(AiConsultation.created_at))
+        .limit(1)
+    )
+    consult = result.scalar_one_or_none()
+    if consult:
+        consult.user_approved = approved
+        await db.commit()
+
+
+@router.post("/approvals/{strategy_id}/approve", summary="반자동 자문 승인")
+async def approve_ai_request(
+    strategy_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+):
+    strategy_uuid = uuid.UUID(strategy_id)
+    strat_result = await db.execute(
+        select(Strategy).where(
+            Strategy.id == strategy_uuid,
+            Strategy.user_id == current_user.id,
+            Strategy.ai_mode == "semi_auto",
+        )
+    )
+    strategy = strat_result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="반자동 전략을 찾을 수 없습니다.")
+
+    consultant = AIConsultant(redis, None)
+    approval = await consultant.get_approval_request(strategy_id)
+    if not approval or approval.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="승인 대기 중인 요청이 없습니다.")
+
+    await consultant.update_approval_status(strategy_id, "approved")
+    await _update_consultation_approval(db, strategy_id, True)
+
+    from app.tasks.trading_tasks import evaluate_strategy_task
+    task = evaluate_strategy_task.apply_async(args=[strategy_id], queue="trading")
+
+    return {
+        "message": "AI 실행 요청이 승인되었습니다.",
+        "strategy_id": strategy_id,
+        "task_id": task.id,
+    }
+
+
+@router.post("/approvals/{strategy_id}/reject", summary="반자동 자문 거절")
+async def reject_ai_request(
+    strategy_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
+):
+    strategy_uuid = uuid.UUID(strategy_id)
+    strat_result = await db.execute(
+        select(Strategy).where(
+            Strategy.id == strategy_uuid,
+            Strategy.user_id == current_user.id,
+            Strategy.ai_mode == "semi_auto",
+        )
+    )
+    strategy = strat_result.scalar_one_or_none()
+    if not strategy:
+        raise HTTPException(status_code=404, detail="반자동 전략을 찾을 수 없습니다.")
+
+    consultant = AIConsultant(redis, None)
+    approval = await consultant.get_approval_request(strategy_id)
+    if not approval or approval.get("status") != "pending":
+        raise HTTPException(status_code=404, detail="거절 대기 중인 요청이 없습니다.")
+
+    await consultant.update_approval_status(strategy_id, "rejected")
+    await _update_consultation_approval(db, strategy_id, False)
+
+    from app.tasks.trading_tasks import evaluate_strategy_task
+    task = evaluate_strategy_task.apply_async(args=[strategy_id], queue="trading")
+
+    return {
+        "message": "AI 실행 요청이 거절되었습니다.",
+        "strategy_id": strategy_id,
+        "task_id": task.id,
     }

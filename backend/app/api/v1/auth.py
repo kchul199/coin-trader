@@ -5,8 +5,8 @@ from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 import uuid
 
-from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_db
+from app.core.redis_client import get_redis
 from app.models.user import User
 from app.models.jwt_blacklist import JWTBlacklist
 from app.schemas.auth import (
@@ -22,6 +22,7 @@ from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer_scheme = HTTPBearer()
+TOTP_PENDING_PREFIX = "auth:2fa:pending:"
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -139,6 +140,7 @@ async def logout(
 async def setup_2fa(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
 ):
     """
     Start 2FA setup by generating a TOTP secret and QR code URI.
@@ -153,8 +155,8 @@ async def setup_2fa(
         Secret and QR code URI for authenticator app
     """
     secret = generate_totp_secret()
-    current_user.totp_secret = secret
-    await db.commit()
+    pending_key = f"{TOTP_PENDING_PREFIX}{current_user.id}"
+    await redis.setex(pending_key, 600, secret)
 
     qr_uri = get_totp_uri(secret, current_user.email)
     return TotpSetupResponse(secret=secret, qr_uri=qr_uri)
@@ -165,6 +167,7 @@ async def verify_2fa(
     data: TotpVerifyRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    redis=Depends(get_redis),
 ):
     """
     Verify TOTP code and confirm 2FA activation.
@@ -177,13 +180,18 @@ async def verify_2fa(
     Raises:
         HTTPException: If 2FA setup not started or code is invalid
     """
-    if not current_user.totp_secret:
+    pending_key = f"{TOTP_PENDING_PREFIX}{current_user.id}"
+    pending_secret = await redis.get(pending_key)
+
+    if not pending_secret:
         raise HTTPException(status_code=400, detail="2FA 설정이 시작되지 않았습니다.")
 
-    if not verify_totp(current_user.totp_secret, data.totp_code):
+    if not verify_totp(pending_secret, data.totp_code):
         raise HTTPException(status_code=401, detail="2FA 코드가 올바르지 않습니다.")
 
-    # Code verified successfully - secret is already saved from setup endpoint
+    current_user.totp_secret = pending_secret
+    await db.commit()
+    await redis.delete(pending_key)
 
 
 @router.get("/me", response_model=UserResponse)

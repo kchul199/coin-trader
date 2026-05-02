@@ -62,6 +62,12 @@ async def run_backtest(
     if req.start_date >= req.end_date:
         raise HTTPException(status_code=400, detail="시작일은 종료일보다 이전이어야 합니다")
 
+    service = BacktestService(db)
+    try:
+        await service.validate_strategy_input(strategy, req.start_date, req.end_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     job_id = str(uuid.uuid4())
 
     # Redis에 대기 상태 저장
@@ -85,6 +91,7 @@ async def run_backtest(
             "slippage_pct": req.slippage_pct,
         },
         task_id=job_id,
+        queue="maintenance",
         priority=5,
     )
 

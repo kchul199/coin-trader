@@ -4,6 +4,7 @@ import { createChart, IChartApi, ISeriesApi, LineData, UTCTimestamp } from 'ligh
 import { backtestApi, BacktestResult, BacktestJobStatus } from '@/api/endpoints/backtest'
 import { useStrategyStore } from '@/stores/strategyStore'
 import { getErrorMessage } from '@/utils/error'
+import { DEFAULT_QUOTE_CURRENCY, formatQuoteCurrency } from '@/utils/market'
 
 // ─────────────────────────── MetricCard ───────────────────────────
 
@@ -121,14 +122,14 @@ function TradeTable({ trades }: { trades: BacktestResult['trade_history'] }) {
               <td className="py-2 pr-4 text-gray-400 text-xs">
                 {new Date(t.exit_time).toLocaleString('ko-KR')}
               </td>
-              <td className="py-2 pr-4 text-right text-white">${t.entry_price.toFixed(2)}</td>
-              <td className="py-2 pr-4 text-right text-white">${t.exit_price.toFixed(2)}</td>
+              <td className="py-2 pr-4 text-right text-white">{formatQuoteCurrency(t.entry_price)}</td>
+              <td className="py-2 pr-4 text-right text-white">{formatQuoteCurrency(t.exit_price)}</td>
               <td className="py-2 pr-4 text-right text-gray-300">{t.quantity.toFixed(6)}</td>
               <td
                 className={`py-2 pr-4 text-right font-medium ${t.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
               >
                 {t.pnl >= 0 ? '+' : ''}
-                {t.pnl.toFixed(2)}
+                {formatQuoteCurrency(t.pnl)}
               </td>
               <td
                 className={`py-2 text-right font-medium ${t.pnl_pct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}
@@ -153,6 +154,14 @@ function TradeTable({ trades }: { trades: BacktestResult['trade_history'] }) {
 
 function ResultPanel({ result }: { result: BacktestResult }) {
   const returnColor = result.total_return_pct >= 0 ? 'text-emerald-400' : 'text-red-400'
+  const aiCompare =
+    result.params_snapshot &&
+    typeof result.params_snapshot === 'object' &&
+    'ai_compare' in result.params_snapshot &&
+    typeof result.params_snapshot.ai_compare === 'object' &&
+    result.params_snapshot.ai_compare !== null
+      ? (result.params_snapshot.ai_compare as Record<string, unknown>)
+      : null
 
   return (
     <div className="space-y-6">
@@ -166,8 +175,8 @@ function ResultPanel({ result }: { result: BacktestResult }) {
           />
           <MetricCard
             label="최종 자산"
-            value={`$${result.final_capital.toLocaleString('en', { maximumFractionDigits: 0 })}`}
-            sub={`초기 $${result.initial_capital.toLocaleString('en', { maximumFractionDigits: 0 })}`}
+            value={formatQuoteCurrency(result.final_capital)}
+            sub={`초기 ${formatQuoteCurrency(result.initial_capital)}`}
           />
           <MetricCard
             label="최대 낙폭"
@@ -198,6 +207,74 @@ function ResultPanel({ result }: { result: BacktestResult }) {
           />
         </div>
       </section>
+
+      {(result.ai_off_return_pct !== null || result.ai_on_return_pct !== null || aiCompare) && (
+        <section>
+          <h3 className="text-sm font-medium text-gray-400 mb-3">AI 비교</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <MetricCard
+              label="AI 제외 수익률"
+              value={
+                result.ai_off_return_pct !== null
+                  ? `${result.ai_off_return_pct >= 0 ? '+' : ''}${result.ai_off_return_pct.toFixed(2)}%`
+                  : '-'
+              }
+              color={
+                result.ai_off_return_pct === null
+                  ? 'text-slate-400'
+                  : result.ai_off_return_pct >= 0
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
+              }
+            />
+            <MetricCard
+              label="AI 포함 수익률"
+              value={
+                result.ai_on_return_pct !== null
+                  ? `${result.ai_on_return_pct >= 0 ? '+' : ''}${result.ai_on_return_pct.toFixed(2)}%`
+                  : '-'
+              }
+              color={
+                result.ai_on_return_pct === null
+                  ? 'text-slate-400'
+                  : result.ai_on_return_pct >= 0
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
+              }
+              sub={
+                aiCompare && typeof aiCompare.status === 'string'
+                  ? `상태: ${aiCompare.status}`
+                  : undefined
+              }
+            />
+          </div>
+          {aiCompare && (
+            <div className="mt-3 rounded-lg border border-gray-700 bg-gray-800 px-4 py-3 text-sm text-gray-300">
+              <p>
+                모드: <span className="text-white">{String(aiCompare.mode ?? '-')}</span>
+                {typeof aiCompare.cached_buckets === 'number' && (
+                  <>
+                    {' '}· 캐시 버킷 <span className="text-white">{aiCompare.cached_buckets}</span>개
+                  </>
+                )}
+                {typeof aiCompare.ai_skips === 'number' && (
+                  <>
+                    {' '}· AI 스킵 <span className="text-white">{aiCompare.ai_skips}</span>회
+                  </>
+                )}
+              </p>
+              {typeof aiCompare.semi_auto_assumption === 'string' && (
+                <p className="mt-1 text-xs text-amber-300">{aiCompare.semi_auto_assumption}</p>
+              )}
+              {aiCompare.status === 'no_cached_consultations' && (
+                <p className="mt-1 text-xs text-amber-300">
+                  이 기간에는 재사용 가능한 AI 자문 캐시가 없어 AI 포함 성과를 계산하지 않았습니다.
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
 
       <section>
         <h3 className="text-sm font-medium text-gray-400 mb-3">자산 곡선</h3>
@@ -403,7 +480,7 @@ export default function Backtest() {
               </div>
 
               <div>
-                <label className="block text-xs text-gray-400 mb-1">초기 자본 (USDT)</label>
+                <label className="block text-xs text-gray-400 mb-1">초기 자본 ({DEFAULT_QUOTE_CURRENCY})</label>
                 <input
                   type="number"
                   className="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded px-3 py-2"

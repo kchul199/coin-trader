@@ -3,8 +3,15 @@ Celery Beat 스케줄 정의
 Redbeat를 사용하여 Redis에 스케줄을 저장한다.
 """
 from celery.schedules import crontab
+from app.config import settings
 
 BEAT_SCHEDULE = {
+    # 포지션 감시: 2초 기본 폴링 + 가격 이벤트 기반 즉시 트리거
+    "watch-position-exits": {
+        "task": "tasks.watch_position_exits",
+        "schedule": float(settings.POSITION_WATCH_INTERVAL_SECONDS),
+        "options": {"queue": "trading_priority"},
+    },
     # 전략 평가: 30초마다
     "evaluate-all-active-strategies": {
         "task": "tasks.evaluate_all_active_strategies",
@@ -27,6 +34,12 @@ BEAT_SCHEDULE = {
     "sync-balances": {
         "task": "tasks.sync_balances",
         "schedule": 600.0,
+        "options": {"queue": "maintenance"},
+    },
+    # 미체결 주문 상태 동기화: 1분마다
+    "sync-open-orders": {
+        "task": "tasks.sync_open_orders",
+        "schedule": 60.0,
         "options": {"queue": "maintenance"},
     },
     # 캔들 저장: 15분마다

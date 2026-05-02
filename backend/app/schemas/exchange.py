@@ -8,7 +8,7 @@ class ExchangeAccountCreate(BaseModel):
     exchange_id: str = Field(..., pattern="^(binance|upbit|bithumb)$")
     api_key: str = Field(..., min_length=1)
     api_secret: str = Field(..., min_length=1)
-    is_testnet: bool = True
+    is_testnet: bool = False
 
 
 class ExchangeAccountResponse(BaseModel):

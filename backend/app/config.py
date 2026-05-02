@@ -20,9 +20,17 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
 
     # Exchange
-    EXCHANGE_ID: str = "binance"
-    USE_TESTNET: bool = True
-    QUOTE_CURRENCY: str = "USDT"
+    EXCHANGE_ID: str = "upbit"
+    USE_TESTNET: bool = False
+    QUOTE_CURRENCY: str = "KRW"
+    MIN_QUOTE_BALANCE: float = 10000.0
+    EXCHANGE_HTTP_TIMEOUT_MS: int = 10000
+    EXCHANGE_RETRY_MAX_ATTEMPTS: int = 4
+    EXCHANGE_RETRY_BASE_DELAY_SECONDS: float = 1.5
+    EXCHANGE_RETRY_MAX_DELAY_SECONDS: float = 15.0
+    POSITION_WATCH_INTERVAL_SECONDS: int = 2
+    POSITION_WATCH_EVENT_THROTTLE_SECONDS: int = 1
+    BALANCE_RESERVATION_TTL_SECONDS: int = 3600
 
     # Anthropic
     ANTHROPIC_API_KEY: str = ""
@@ -30,6 +38,9 @@ class Settings(BaseSettings):
 
     # Celery
     CELERY_BROKER_URL: str = "redis://localhost:6379/1"
+    CELERY_TASK_MAX_RETRIES: int = 4
+    CELERY_RETRY_BASE_DELAY_SECONDS: int = 5
+    CELERY_RETRY_MAX_DELAY_SECONDS: int = 60
 
     # API
     API_V1_STR: str = "/api/v1"

@@ -26,7 +26,7 @@ services:
   celery-worker:
     build: ../backend
     <<: *backend-env
-    command: celery -A app.tasks.celery_app worker -Q trading,ai_advice,maintenance -c 4 --loglevel=info
+    command: celery -A app.tasks.celery_app worker -Q trading_priority,trading,ai_advice,maintenance -c 4 --loglevel=info
     depends_on:
       - backend
 
